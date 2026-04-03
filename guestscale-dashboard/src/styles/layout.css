@@ -1,0 +1,27 @@
+/* === APP LAYOUT === */
+.app{display:flex}
+.sidebar{width:240px;background:var(--sb);position:fixed;height:100vh;display:flex;flex-direction:column;z-index:40;border-right:1px solid #1F2937}
+.sb-b{padding:24px 20px 28px;border-bottom:1px solid #1F2937}
+.sb-logo{display:flex;align-items:center;gap:10px}
+.sb-icon{width:32px;height:32px;background:#1A1D27;border-radius:8px;display:flex;align-items:center;justify-content:center}
+.sb-icon svg{width:22px;height:22px}
+.sb-wm{font-size:17px;font-weight:800;color:#F9FAFB;letter-spacing:-.02em}
+.sb-s{font-size:9px;color:#4B5563;letter-spacing:.15em;text-transform:uppercase;margin-top:1px}
+.sb-n{padding:16px 12px;flex:1;overflow-y:auto}
+.sb-l{font-size:10px;font-weight:700;color:#4B5563;letter-spacing:.1em;padding:0 8px;margin-bottom:8px;margin-top:16px;text-transform:uppercase}
+.sb-l:first-child{margin-top:0}
+.nb{width:100%;display:flex;align-items:center;gap:10px;padding:9px 12px;border-radius:8px;border:none;background:transparent;color:var(--sbt);font-size:13px;font-weight:500;text-align:left;font-family:var(--f);cursor:pointer;margin-bottom:1px;transition:all .15s}
+.nb:hover{background:var(--sbh);color:#D1D5DB}
+.nb.on{background:var(--sba);color:#F9FAFB;font-weight:600}
+.nb .ic{font-size:14px;width:20px;text-align:center;opacity:.5}.nb.on .ic{opacity:1}
+.nb-badge{margin-left:auto;min-width:18px;height:18px;border-radius:9px;font-size:10px;font-weight:700;display:flex;align-items:center;justify-content:center;padding:0 5px}
+.sb-u{padding:16px 20px;border-top:1px solid #1F2937;display:flex;align-items:center;gap:10px}
+.uav{width:32px;height:32px;border-radius:8px;background:var(--acg);display:flex;align-items:center;justify-content:center;color:#fff;font-size:11px;font-weight:700}
+
+/* === MAIN CONTENT === */
+.main{flex:1;margin-left:240px}
+.topbar{padding:16px 32px;display:flex;justify-content:space-between;align-items:center;position:sticky;top:0;z-index:30;background:rgba(244,245,249,.85);backdrop-filter:blur(20px);border-bottom:1px solid var(--b)}
+.topbar h1{font-size:18px;font-weight:700;letter-spacing:-.02em;color:var(--t)}
+.sp{display:flex;align-items:center;gap:6px;padding:5px 12px;border-radius:20px;font-size:12px;font-weight:600}
+.sd2{width:7px;height:7px;border-radius:50%;box-shadow:0 0 6px rgba(16,185,129,.5)}
+.content{padding:24px 32px;max-width:1120px}

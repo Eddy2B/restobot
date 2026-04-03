@@ -19,8 +19,10 @@ import anthropic
 import httpx
 import asyncpg
 import bcrypt
+from pathlib import Path
 from fastapi import FastAPI, Request, Response, BackgroundTasks
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, FileResponse
+from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 
 # ==============================================================
@@ -5718,10 +5720,15 @@ async def admin_dashboard_page(request: Request):
     return HTMLResponse(ADMIN_DASHBOARD_HTML)
 
 
+DASHBOARD_DIR = Path(__file__).parent / "guestscale-dashboard" / "dist"
+
 @app.get("/login", response_class=HTMLResponse)
 @app.get("/dashboard", response_class=HTMLResponse)
 @app.get("/dashboard/{slug}", response_class=HTMLResponse)
 async def dashboard_page(request: Request, slug: str = ""):
+    index_file = DASHBOARD_DIR / "index.html"
+    if index_file.exists():
+        return FileResponse(index_file, media_type="text/html")
     return HTMLResponse(DASHBOARD_HTML)
 
 
@@ -8081,6 +8088,15 @@ document.addEventListener('click',function(e){
 @app.get("/health")
 async def health():
     return {"status": "ok"}
+
+
+# ==============================================================
+# STATIC FILES (Vite build)
+# ==============================================================
+
+_dashboard_assets = Path(__file__).parent / "guestscale-dashboard" / "dist" / "assets"
+if _dashboard_assets.exists():
+    app.mount("/assets", StaticFiles(directory=str(_dashboard_assets)), name="dashboard-assets")
 
 
 # ==============================================================

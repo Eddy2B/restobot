@@ -1,0 +1,19 @@
+/* === LOGIN === */
+.lo{position:fixed;inset:0;background:#0F1117;display:flex;align-items:center;justify-content:center;z-index:100}
+.lbox{text-align:center;width:360px}
+.l-logo{display:flex;align-items:center;justify-content:center;gap:10px;margin-bottom:8px}
+.l-icon{width:40px;height:40px;background:#1A1D27;border-radius:10px;display:flex;align-items:center;justify-content:center}
+.l-icon svg{width:28px;height:28px}
+.lwm{font-size:28px;font-weight:800;color:#fff;letter-spacing:-.03em}
+.lsub{font-size:11px;color:#6B7280;letter-spacing:.12em;margin-bottom:36px;text-transform:uppercase}
+.lcd{background:#1A1D27;border-radius:16px;padding:28px 24px;border:1px solid #252836}
+.linp{width:100%;padding:13px 16px;border-radius:10px;background:#0F1117;border:1.5px solid #374151;font-size:14px;color:#F9FAFB;outline:none;font-family:var(--f);transition:border .2s}
+.linp::placeholder{color:#6B7280}
+.linp:focus{border-color:var(--ac)}
+.lbtn{width:100%;padding:13px;border-radius:10px;border:none;background:var(--acg);color:#fff;font-size:14px;font-weight:700;cursor:pointer;font-family:var(--f);margin-top:12px;transition:opacity .2s}
+.lbtn:hover{opacity:.9}
+.lerr{color:var(--da);font-size:13px;margin-bottom:14px;display:none;background:#FEF2F220;padding:10px 14px;border-radius:10px;border:1px solid #EF444430}
+.lerr.visible{display:block}
+.lerr.success{color:#10B981;border-color:#6EE7B7;background:#ECFDF520}
+@keyframes shake{0%,100%{transform:translateX(0)}20%,60%{transform:translateX(-6px)}40%,80%{transform:translateX(6px)}}
+.shake{animation:shake .4s ease}
