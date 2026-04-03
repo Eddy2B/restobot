@@ -14,6 +14,24 @@ import time as time_mod
 from datetime import datetime, date, time, timedelta
 from contextlib import asynccontextmanager
 from collections import Counter
+from html import escape as html_escape
+
+
+def sanitize_input(value, max_length: int = 500):
+    """Escape dangerous HTML characters and limit length."""
+    if not isinstance(value, str):
+        return value
+    value = value.strip()
+    value = html_escape(value, quote=True)
+    return value[:max_length]
+
+
+def sanitize_dict(data: dict, fields: list, max_length: int = 500):
+    """Sanitize multiple string fields in a dict in-place."""
+    for f in fields:
+        if f in data and isinstance(data[f], str):
+            data[f] = sanitize_input(data[f], max_length)
+    return data
 
 import anthropic
 import httpx
@@ -65,25 +83,26 @@ RATE_LIMITS = {
     "default": (60, 60),           # 60 requests per minute for other endpoints
 }
 
-def check_rate_limit(ip: str, endpoint: str) -> bool:
-    """Returns True if request is allowed, False if rate limited."""
+def check_rate_limit(ip: str, endpoint: str) -> tuple:
+    """Returns (allowed: bool, limit: int, remaining: int, window: int)."""
     now = time_mod.time()
     key = endpoint if endpoint in RATE_LIMITS else "default"
     max_requests, window = RATE_LIMITS[key]
-    
+
     if ip not in rate_limit_store:
         rate_limit_store[ip] = {}
     if key not in rate_limit_store[ip]:
         rate_limit_store[ip][key] = []
-    
+
     # Clean old entries
     rate_limit_store[ip][key] = [t for t in rate_limit_store[ip][key] if now - t < window]
-    
+
+    remaining = max(0, max_requests - len(rate_limit_store[ip][key]))
     if len(rate_limit_store[ip][key]) >= max_requests:
-        return False
-    
+        return False, max_requests, 0, window
+
     rate_limit_store[ip][key].append(now)
-    return True
+    return True, max_requests, remaining - 1, window
 
 def check_login_lockout(ip: str) -> bool:
     """Returns True if IP is locked out from login attempts."""
@@ -5256,8 +5275,11 @@ async def send_admin_notification_email(user_email: str, first_name: str, last_n
 async def api_register(request: Request):
     """Register a new restaurant + owner user. Self-service from guestscale.com."""
     client_ip = request.headers.get("x-forwarded-for", request.client.host if request.client else "unknown").split(",")[0].strip()
-    if not check_rate_limit(client_ip, "/api/register"):
-        return JSONResponse(status_code=429, content={"error": "Trop de tentatives. Veuillez réessayer dans quelques minutes."})
+    rl_ok, rl_limit, rl_remain, rl_window = check_rate_limit(client_ip, "/api/register")
+    if not rl_ok:
+        r = JSONResponse(status_code=429, content={"error": "Trop de tentatives. Veuillez réessayer dans quelques minutes."})
+        r.headers["X-RateLimit-Limit"] = str(rl_limit); r.headers["X-RateLimit-Remaining"] = "0"; r.headers["Retry-After"] = str(rl_window)
+        return r
     data = await safe_json(request)
     if not data:
         return JSONResponse(status_code=400, content={"error": "Requête invalide"})
@@ -5265,11 +5287,11 @@ async def api_register(request: Request):
     if email and not is_valid_email(email):
         return JSONResponse(status_code=400, content={"error": "Email invalide"})
     password = data.get("password", "")
-    first_name = data.get("first_name", "")
-    last_name = data.get("last_name", "")
-    phone = data.get("phone", "")
-    restaurant_name = data.get("restaurant_name", "")
-    restaurant_address = data.get("restaurant_address", "")
+    first_name = sanitize_input(data.get("first_name", ""), 100)
+    last_name = sanitize_input(data.get("last_name", ""), 100)
+    phone = sanitize_input(data.get("phone", ""), 30)
+    restaurant_name = sanitize_input(data.get("restaurant_name", ""), 200)
+    restaurant_address = sanitize_input(data.get("restaurant_address", ""), 300)
 
     if not email or not password or not restaurant_name:
         return JSONResponse(status_code=400, content={"error": "Email, mot de passe et nom du restaurant requis"})
@@ -5376,8 +5398,11 @@ async def api_login(request: Request):
     client_ip = request.headers.get("x-forwarded-for", request.client.host if request.client else "unknown").split(",")[0].strip()
     if check_login_lockout(client_ip):
         return JSONResponse(status_code=429, content={"error": "Compte temporairement verrouillé suite à trop de tentatives. Réessayez plus tard."})
-    if not check_rate_limit(client_ip, "/api/login"):
-        return JSONResponse(status_code=429, content={"error": "Trop de tentatives. Veuillez réessayer dans quelques minutes."})
+    rl_ok, rl_limit, rl_remain, rl_window = check_rate_limit(client_ip, "/api/login")
+    if not rl_ok:
+        r = JSONResponse(status_code=429, content={"error": "Trop de tentatives. Veuillez réessayer dans quelques minutes."})
+        r.headers["X-RateLimit-Limit"] = str(rl_limit); r.headers["X-RateLimit-Remaining"] = "0"; r.headers["Retry-After"] = str(rl_window)
+        return r
     data = await safe_json(request)
     if not data:
         return JSONResponse(status_code=400, content={"error": "Requête invalide"})
@@ -5441,7 +5466,8 @@ password_reset_tokens = {}
 async def api_forgot_password(request: Request):
     """Send a password reset email with a temporary code."""
     client_ip = request.headers.get("x-forwarded-for", request.client.host if request.client else "unknown").split(",")[0].strip()
-    if not check_rate_limit(client_ip, "/api/forgot-password"):
+    rl_ok, *_ = check_rate_limit(client_ip, "/api/forgot-password")
+    if not rl_ok:
         return JSONResponse(status_code=429, content={"error": "Trop de tentatives. Veuillez réessayer dans quelques minutes."})
     data = await safe_json(request)
     if not data:
@@ -5511,7 +5537,8 @@ async def api_forgot_password(request: Request):
 async def api_reset_password(request: Request):
     """Reset password using the code from email."""
     client_ip = request.headers.get("x-forwarded-for", request.client.host if request.client else "unknown").split(",")[0].strip()
-    if not check_rate_limit(client_ip, "/api/reset-password"):
+    rl_ok, *_ = check_rate_limit(client_ip, "/api/reset-password")
+    if not rl_ok:
         return JSONResponse(status_code=429, content={"error": "Trop de tentatives. Veuillez réessayer dans quelques minutes."})
     data = await safe_json(request)
     if not data:
@@ -5974,6 +6001,28 @@ async def api_get_reviews(request: Request):
     }
 
 
+@app.get("/api/contacts/export")
+async def api_export_contacts(request: Request):
+    import csv, io
+    auth = get_auth(request)
+    if not auth:
+        return Response(status_code=401)
+    rid = auth["restaurant_id"]
+    rid_contacts = contacts.get(rid, {})
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(["Nom", "Telephone", "Email", "Source", "Visites", "Tags", "Preferences", "Notes", "Langue"])
+    for c in sorted(rid_contacts.values(), key=lambda c: c.get("name", "")):
+        writer.writerow([
+            c.get("name", ""), c.get("phone", ""), c.get("email", ""),
+            c.get("source", ""), c.get("visits", 0),
+            ", ".join(c.get("tags", [])), c.get("preferences", ""),
+            c.get("notes", ""), c.get("language", ""),
+        ])
+    return Response(content=output.getvalue(), media_type="text/csv",
+                    headers={"Content-Disposition": "attachment; filename=contacts_export.csv"})
+
+
 @app.get("/api/contacts")
 async def api_get_contacts(request: Request):
     auth = get_auth(request)
@@ -5993,8 +6042,8 @@ async def api_tag_contact(request: Request):
     rid = auth["restaurant_id"]
     data = await request.json()
     phone = data.get("phone")
-    tag = data.get("tag", "")
-    tags_list = data.get("tags", [])
+    tag = sanitize_input(data.get("tag", ""), 100)
+    tags_list = [sanitize_input(t, 100) for t in data.get("tags", []) if isinstance(t, str)]
     rid_contacts = contacts.get(rid, {})
     if phone in rid_contacts:
         if tags_list:
@@ -6014,7 +6063,7 @@ async def api_note_contact(request: Request):
     rid = auth["restaurant_id"]
     data = await request.json()
     phone = data.get("phone")
-    note = data.get("note", "")
+    note = sanitize_input(data.get("note", ""), 2000)
     rid_contacts = contacts.get(rid, {})
     if phone in rid_contacts:
         rid_contacts[phone]["notes"] = note
@@ -6030,7 +6079,7 @@ async def api_preferences_contact(request: Request):
     rid = auth["restaurant_id"]
     data = await request.json()
     phone = data.get("phone")
-    preferences = data.get("preferences", "")
+    preferences = sanitize_input(data.get("preferences", ""), 1000)
     rid_contacts = contacts.get(rid, {})
     if phone in rid_contacts:
         rid_contacts[phone]["preferences"] = preferences
@@ -6075,7 +6124,9 @@ async def api_update_config(request: Request):
     if not rest:
         return {"error": "No restaurant"}
     ctx = rest.setdefault("settings", {})
-    for field in ["description", "menu", "hours", "address", "phone", "tone", "languages", "special_info", "booking_link", "allergens_policy"]:
+    text_fields = ["description", "menu", "hours", "address", "phone", "tone", "languages", "special_info", "booking_link", "allergens_policy"]
+    sanitize_dict(data, text_fields + ["name"], 2000)
+    for field in text_fields:
         if field in data:
             ctx[field] = data[field]
     if "name" in data:
@@ -6114,6 +6165,13 @@ async def api_save_menu(request: Request):
     if not rest:
         return {"error": "No restaurant"}
     sections = data.get("sections", [])
+    for sec in sections:
+        if isinstance(sec.get("title"), str):
+            sec["title"] = sanitize_input(sec["title"], 200)
+        for item in sec.get("items", []):
+            for k in ("name", "description", "price"):
+                if isinstance(item.get(k), str):
+                    item[k] = sanitize_input(item[k], 500)
     ctx = rest.setdefault("settings", {})
     ctx["menu_sections"] = sections
     text_lines = []
@@ -6188,7 +6246,7 @@ async def api_set_daily(request: Request):
     rid = auth["restaurant_id"]
     data = await request.json()
     status = restaurant_status.setdefault(rid, {})
-    status["daily_message"] = data.get("message", "")
+    status["daily_message"] = sanitize_input(data.get("message", ""), 1000)
     await db_save_restaurant_status(rid, status)
     rest = restaurants_cache.get(rid)
     if rest:
@@ -6204,7 +6262,7 @@ async def api_broadcast(request: Request):
         return Response(status_code=401)
     rid = auth["restaurant_id"]
     data = await request.json()
-    msg = data.get("message", "")
+    msg = sanitize_input(data.get("message", ""), 1000)
     if not msg:
         return {"error": "No message"}
     rest = restaurants_cache.get(rid)
@@ -6280,6 +6338,7 @@ async def api_add_manual_booking(request: Request):
         return Response(status_code=401)
     rid = auth["restaurant_id"]
     data = await request.json()
+    sanitize_dict(data, ["name", "phone", "email", "notes", "zone", "source"], 500)
     rid_bookings = bookings.setdefault(rid, [])
     booking_id = f"R{len(rid_bookings)+1}"
     name = data.get("name", "")
@@ -6328,6 +6387,7 @@ async def api_update_booking(request: Request):
         return Response(status_code=401)
     rid = auth["restaurant_id"]
     data = await request.json()
+    sanitize_dict(data, ["name", "phone"], 500)
     bid = data.get("booking_id", "")
     for b in bookings.get(rid, []):
         if b["id"] == bid:
@@ -6457,6 +6517,7 @@ async def api_add_to_waitlist(request: Request):
         return Response(status_code=401)
     rid = auth["restaurant_id"]
     data = await request.json()
+    sanitize_dict(data, ["phone", "name"], 200)
     phone = data.get("phone", "")
     name = data.get("name", "")
     covers = int(data.get("covers", 2))
@@ -6513,8 +6574,8 @@ async def api_notify_waitlist(request: Request):
 async def api_webchat_message(request: Request):
     data = await request.json()
     session_id = data.get("session_id", "")
-    message = data.get("message", "").strip()
-    visitor_name = data.get("name", "")
+    message = sanitize_input(data.get("message", ""), 2000).strip()
+    visitor_name = sanitize_input(data.get("name", ""), 100)
     slug = data.get("slug", "")
 
     if not session_id or not message:
