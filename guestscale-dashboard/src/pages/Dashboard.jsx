@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useStore } from '../utils/store';
 import { useToast } from '../components/Toast';
 import Calendar from '../components/Calendar';
@@ -54,6 +54,7 @@ function timeStr(t) {
 
 export default function Dashboard() {
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const { state, dispatch, fetchData } = useStore();
   const showToast = useToast();
 
@@ -163,6 +164,14 @@ export default function Dashboard() {
         }
         dispatch({ type: 'SET_USER', payload: d.user });
         fetchData().then(() => {
+          // Restore navigation from URL params
+          const params = new URLSearchParams(window.location.search);
+          const urlPage = params.get('p');
+          if (urlPage && urlPage !== 'overview') dispatch({ type: 'SET_PAGE', payload: urlPage });
+          const urlContact = params.get('contact');
+          if (urlContact) setSelectedContact(urlContact);
+          const urlConv = params.get('conv');
+          if (urlConv) setSelectedConv(urlConv);
           // check onboarding
           apiFetch('/api/config').then(r => r.ok ? r.json() : null).then(cfg => {
             if (cfg && !cfg.name) {
@@ -207,7 +216,28 @@ export default function Dashboard() {
   const setPage = useCallback((p) => {
     dispatch({ type: 'SET_PAGE', payload: p });
     setMoreOpen(false);
+    const params = new URLSearchParams(window.location.search);
+    params.set('p', p);
+    if (p !== 'contacts') params.delete('contact');
+    if (p !== 'conversations') params.delete('conv');
+    window.history.replaceState(null, '', '?' + params.toString());
   }, [dispatch]);
+
+  function openContact(phone) {
+    setSelectedContact(phone);
+    setContactEditMode(false);
+    setContactNoteDraft('');
+    const params = new URLSearchParams(window.location.search);
+    if (phone) { params.set('contact', phone); } else { params.delete('contact'); }
+    window.history.replaceState(null, '', '?' + params.toString());
+  }
+
+  function openConv(phone) {
+    setSelectedConv(phone);
+    const params = new URLSearchParams(window.location.search);
+    if (phone) { params.set('conv', phone); } else { params.delete('conv'); }
+    window.history.replaceState(null, '', '?' + params.toString());
+  }
 
   function doLogout() {
     clearToken();
@@ -513,6 +543,7 @@ export default function Dashboard() {
         method: 'POST',
         body: JSON.stringify({ phone, note: contactNoteDraft })
       });
+      setContactNoteDraft('');
       await fetchData();
       showToast('Note sauvegardee');
     } catch { showToast('Erreur'); }
@@ -734,7 +765,7 @@ export default function Dashboard() {
                 const lastMsg = cv.last_message || (cv.messages && cv.messages.length > 0 ? cv.messages[cv.messages.length - 1].content || cv.messages[cv.messages.length - 1].text : '');
                 return (
                   <div key={phone} className="cr" style={{ cursor: 'pointer' }}
-                    onClick={() => { setSelectedConv(phone); setPage('conversations'); }}>
+                    onClick={() => { openConv(phone); setPage('conversations'); }}>
                     <div className="cav" style={{ background: 'var(--acg)', color: '#fff' }}>{initials(name)}</div>
                     <div style={{ flex: 1, minWidth: 0 }}>
                       <div style={{ fontSize: 13, fontWeight: 600 }}>{name}</div>
@@ -765,7 +796,7 @@ export default function Dashboard() {
                 <div className="cg3" style={{ padding: 12 }}>
                   {contactList.slice(0, 6).map(c => (
                     <div key={c.phone} className="cc" style={{ cursor: 'pointer' }}
-                      onClick={() => { setSelectedContact(c.phone); setPage('contacts'); setContactNoteDraft(c.notes || ''); }}>
+                      onClick={() => { openContact(c.phone); setPage('contacts'); }}>
                       <div className="cav" style={{
                         background: (SRC_COLORS[c.source] || '#6B7280') + '20',
                         color: SRC_COLORS[c.source] || '#6B7280',
@@ -1297,7 +1328,7 @@ export default function Dashboard() {
             return (
               <div key={phone}
                 className={'conv-list-item' + (selectedConv === phone ? ' selected' : '')}
-                onClick={() => setSelectedConv(phone)}>
+                onClick={() => openConv(phone)}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                   <div className="cav" style={{ background: 'var(--acg)', color: '#fff', width: 36, height: 36 }}>{initials(name)}</div>
                   <div style={{ flex: 1, minWidth: 0 }}>
@@ -1453,7 +1484,7 @@ export default function Dashboard() {
           </div>
           {contactList.map(c => (
             <div key={c.phone} className="rw" style={{ cursor: 'pointer' }}
-              onClick={() => { setSelectedContact(c.phone); setContactEditMode(false); setContactNoteDraft(c.notes || ''); }}>
+              onClick={() => openContact(c.phone)}>
               <div className="rl">
                 <div className="cav" style={{
                   background: (SRC_COLORS[c.source] || '#6B7280') + '20',
@@ -1500,7 +1531,7 @@ export default function Dashboard() {
     return (
       <div>
         <button className="ba" style={{ marginBottom: 14, background: 'var(--bg)', color: 'var(--ts)', border: '1px solid var(--b)' }}
-          onClick={() => setSelectedContact(null)}>&larr; Retour</button>
+          onClick={() => openContact(null)}>&larr; Retour</button>
 
         <div className="card" style={{ marginBottom: 14 }}>
           <div style={{ padding: 20 }}>
@@ -1588,13 +1619,25 @@ export default function Dashboard() {
         <div className="card" style={{ marginTop: 14 }}>
           <div className="card-h">
             <div className="card-t">Notes</div>
+            <div style={{ fontSize: 11, color: 'var(--tm)' }}>
+              {(Array.isArray(c.notes) ? c.notes : (c.notes ? [{ text: c.notes, date: '' }] : [])).length} note{(Array.isArray(c.notes) ? c.notes : []).length !== 1 ? 's' : ''}
+            </div>
           </div>
           <div style={{ padding: 14 }}>
+            {(Array.isArray(c.notes) ? [...c.notes].reverse() : (c.notes ? [{ text: c.notes, date: '' }] : [])).map((n, i) => (
+              <div key={i} style={{ padding: '8px 12px', background: 'var(--bg)', borderRadius: 8, marginBottom: 6, fontSize: 13 }}>
+                <div style={{ color: 'var(--t)' }}>{n.text}</div>
+                {n.date && <div style={{ fontSize: 10, color: 'var(--tm)', marginTop: 4 }}>
+                  {new Date(n.date).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                </div>}
+              </div>
+            ))}
             <textarea className="dinp" value={contactNoteDraft}
               onChange={e => setContactNoteDraft(e.target.value)}
-              placeholder="Notes sur ce client..." />
+              placeholder="Ajouter une note..."
+              onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); if (contactNoteDraft.trim()) saveContactNote(c.phone); } }} />
             <button className="ba" style={{ marginTop: 8 }}
-              onClick={() => saveContactNote(c.phone)}>Sauvegarder</button>
+              onClick={() => { if (contactNoteDraft.trim()) saveContactNote(c.phone); }}>Ajouter la note</button>
           </div>
         </div>
 

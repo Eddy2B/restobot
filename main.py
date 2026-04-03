@@ -6063,11 +6063,18 @@ async def api_note_contact(request: Request):
     rid = auth["restaurant_id"]
     data = await request.json()
     phone = data.get("phone")
-    note = sanitize_input(data.get("note", ""), 2000)
+    note_text = sanitize_input(data.get("note", ""), 2000)
     rid_contacts = contacts.get(rid, {})
     if phone in rid_contacts:
-        rid_contacts[phone]["notes"] = note
-        await db_save_contact(rid, phone, rid_contacts[phone])
+        ct = rid_contacts[phone]
+        # Migrate old string notes to list format
+        existing = ct.get("notes", "")
+        if isinstance(existing, str):
+            ct["notes"] = [{"text": existing, "date": now_paris().isoformat()}] if existing else []
+        if note_text:
+            ct["notes"].append({"text": note_text, "date": now_paris().isoformat()})
+        await db_save_contact(rid, phone, ct)
+        bump_version(rid)
     return {"status": "ok"}
 
 
