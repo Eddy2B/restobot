@@ -292,7 +292,7 @@ export default function Dashboard() {
       await apiFetch('/api/bookings/update', {
         method: 'POST',
         body: JSON.stringify({
-          id: editResaData.id, name: erName, covers: parseInt(erCovers) || 2,
+          booking_id: editResaData.id, name: erName, covers: parseInt(erCovers) || 2,
           time: erTime, phone: erPhone, table: erTable
         })
       });
@@ -307,7 +307,7 @@ export default function Dashboard() {
     try {
       await apiFetch('/api/bookings/delete', {
         method: 'POST',
-        body: JSON.stringify({ id: editResaData.id })
+        body: JSON.stringify({ booking_id: editResaData.id })
       });
       await fetchData();
       setEditResaOpen(false);
