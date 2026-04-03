@@ -1903,13 +1903,15 @@ async def notify_owner(rid: str, rest: dict, customer_phone: str, customer_name:
         rid_bookings = bookings.setdefault(rid, [])
         booking_date = extract_booking_date(combined)
 
-        # Anti-duplicate: skip if same phone + same date + same time (within 5 min window)
+        # Anti-duplicate: skip if same name + same date + same time (within 30 min)
+        # Uses name (not phone) so a client can book for someone else on the same day
         is_duplicate = False
+        candidate_name = (customer_name or customer_phone).strip().lower()
         for existing in rid_bookings:
-            if (existing.get("phone") == customer_phone
+            existing_name = (existing.get("name") or "").strip().lower()
+            if (existing_name == candidate_name
                 and existing.get("date", "") == booking_date
                 and existing.get("status") not in ("cancelled",)):
-                # Same phone, same date — check time proximity
                 existing_time = existing.get("booking_time") or existing.get("time", "")
                 candidate_time = booking_time or ""
                 if existing_time and candidate_time:
@@ -1917,13 +1919,12 @@ async def notify_owner(rid: str, rest: dict, customer_phone: str, customer_name:
                         eh, em = existing_time.split(":")
                         ch, cm = candidate_time.split(":")
                         diff = abs(int(eh)*60+int(em) - int(ch)*60-int(cm))
-                        if diff <= 30:  # Within 30 minutes = likely duplicate
+                        if diff <= 30:
                             is_duplicate = True
                             break
                     except Exception:
                         pass
                 elif not existing_time and not candidate_time:
-                    # Both have no time — same phone + same date = duplicate
                     is_duplicate = True
                     break
         if is_duplicate:
