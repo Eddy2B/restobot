@@ -5293,8 +5293,13 @@ async def api_register(request: Request):
     restaurant_name = sanitize_input(data.get("restaurant_name", ""), 200)
     restaurant_address = sanitize_input(data.get("restaurant_address", ""), 300)
 
-    if not email or not password or not restaurant_name:
-        return JSONResponse(status_code=400, content={"error": "Email, mot de passe et nom du restaurant requis"})
+    if not email or not restaurant_name:
+        return JSONResponse(status_code=400, content={"error": "Email et nom du restaurant requis"})
+    # Generate password if not provided (simplified signup flow)
+    generated_password = False
+    if not password:
+        password = secrets.token_urlsafe(12)[:14] + "!A1"  # 17 chars, guaranteed mixed
+        generated_password = True
     if len(password) < 12:
         return JSONResponse(status_code=400, content={"error": "Le mot de passe doit contenir au moins 12 caractères"})
 
@@ -5376,7 +5381,7 @@ async def api_register(request: Request):
 
         # Send welcome email + add to Brevo list + admin notification (async, don't block registration)
         import asyncio
-        asyncio.create_task(send_brevo_welcome(email, first_name or restaurant_name, restaurant_name, password))
+        asyncio.create_task(send_brevo_welcome(email, first_name or restaurant_name, restaurant_name, password if generated_password else ""))
         asyncio.create_task(send_admin_notification_email(email, first_name, last_name, restaurant_name, phone))
 
         return {

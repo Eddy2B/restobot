@@ -111,6 +111,9 @@ export default function Dashboard() {
   const [contactPrefDraft, setContactPrefDraft] = useState('');
   const [contactNoteDraft, setContactNoteDraft] = useState('');
   const [contactTagDraft, setContactTagDraft] = useState('');
+  const [contactSearch, setContactSearch] = useState('');
+  const [contactTagFilter, setContactTagFilter] = useState('');
+  const [contactSort, setContactSort] = useState('name');
 
   // Waitlist form
   const [wlName, setWlName] = useState('');
@@ -1292,11 +1295,15 @@ export default function Dashboard() {
         ))}
         {sections.length === 0 && (
           <div className="ph">
-            <div className="phi">&#127860;</div>
-            <div style={{ fontSize: 14, fontWeight: 600 }}>Aucun menu</div>
-            <div style={{ fontSize: 12, color: 'var(--tm)', marginTop: 4 }}>
-              Ajoutez des sections ou scannez votre carte
+            <div className="phi">&#128247;</div>
+            <div style={{ fontSize: 14, fontWeight: 600 }}>Scannez votre carte !</div>
+            <div style={{ fontSize: 12, color: 'var(--tm)', marginTop: 4, maxWidth: 300, margin: '4px auto 12px' }}>
+              Prenez une photo de votre menu, notre IA le numerise automatiquement.
             </div>
+            <label className="ba" style={{ cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+              &#128247; Scanner mon menu
+              <input type="file" accept="image/*" style={{ display: 'none' }} onChange={scanMenu} />
+            </label>
           </div>
         )}
       </div>
@@ -1344,7 +1351,7 @@ export default function Dashboard() {
           })}
           {sorted.length === 0 && (
             <div style={{ padding: 30, textAlign: 'center', color: 'var(--tm)', fontSize: 12 }}>
-              Aucune conversation
+              Activez l&apos;agent WhatsApp pour commencer a recevoir des messages
             </div>
           )}
         </div>
@@ -1456,9 +1463,10 @@ export default function Dashboard() {
             <div className="ph" style={{ border: 'none', boxShadow: 'none' }}>
               <div className="phi">&#9733;</div>
               <div style={{ fontSize: 14, fontWeight: 600 }}>Aucune demande d&apos;avis</div>
-              <div style={{ fontSize: 12, color: 'var(--tm)', marginTop: 4 }}>
-                Les demandes sont envoyees automatiquement apres chaque reservation
+              <div style={{ fontSize: 12, color: 'var(--tm)', marginTop: 4, maxWidth: 340, margin: '4px auto 12px' }}>
+                Les demandes d&apos;avis Google sont envoyees automatiquement apres chaque reservation. Configurez votre lien Google dans Configuration.
               </div>
+              <button className="ba" onClick={() => setPage('config')}>Configurer les avis</button>
             </div>
           )}
         </div>
@@ -1473,16 +1481,64 @@ export default function Dashboard() {
       return renderContactCard(c);
     }
 
+    // Compute unique tags for filter
+    const allTags = [...new Set(contactList.flatMap(c => c.tags || []))].sort();
+    // Filter + search + sort
+    let filtered = contactList;
+    if (contactSearch) {
+      const q = contactSearch.toLowerCase();
+      filtered = filtered.filter(c =>
+        (c.name || '').toLowerCase().includes(q) ||
+        (c.email || '').toLowerCase().includes(q) ||
+        (c.phone || '').includes(q)
+      );
+    }
+    if (contactTagFilter) {
+      filtered = filtered.filter(c => (c.tags || []).includes(contactTagFilter));
+    }
+    filtered = [...filtered].sort((a, b) => {
+      if (contactSort === 'visits') return (b.visits || 0) - (a.visits || 0);
+      if (contactSort === 'recent') return (b.last_seen || '').localeCompare(a.last_seen || '');
+      return (a.name || '').localeCompare(b.name || '');
+    });
+
     return (
       <div>
+        {/* Search + filters */}
+        <div style={{ marginBottom: 14, display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center' }}>
+          <input className="finp" style={{ flex: 1, minWidth: 200, marginBottom: 0 }}
+            placeholder="Rechercher par nom, email ou telephone..."
+            value={contactSearch} onChange={e => setContactSearch(e.target.value)} />
+          <select className="finp" style={{ width: 'auto', marginBottom: 0, minWidth: 120 }}
+            value={contactSort} onChange={e => setContactSort(e.target.value)}>
+            <option value="name">Tri : Nom A-Z</option>
+            <option value="visits">Tri : Visites</option>
+            <option value="recent">Tri : Recent</option>
+          </select>
+        </div>
+        {allTags.length > 0 && (
+          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 14 }}>
+            <button className={'badge'} style={{
+              cursor: 'pointer', border: 'none', fontFamily: 'var(--f)',
+              background: !contactTagFilter ? 'var(--ac)' : 'var(--bl)', color: !contactTagFilter ? '#fff' : 'var(--ts)'
+            }} onClick={() => setContactTagFilter('')}>Tous</button>
+            {allTags.map(tag => (
+              <button key={tag} className={'badge'} style={{
+                cursor: 'pointer', border: 'none', fontFamily: 'var(--f)',
+                background: contactTagFilter === tag ? 'var(--ac)' : 'var(--al)', color: contactTagFilter === tag ? '#fff' : 'var(--ac)'
+              }} onClick={() => setContactTagFilter(contactTagFilter === tag ? '' : tag)}>{tag}</button>
+            ))}
+          </div>
+        )}
+
         <div className="card">
           <div className="card-h">
             <div>
               <div className="card-t">Contacts</div>
-              <div className="card-s">{contactList.length} contacts</div>
+              <div className="card-s">{filtered.length} / {contactList.length} contacts</div>
             </div>
           </div>
-          {contactList.map(c => (
+          {filtered.map(c => (
             <div key={c.phone} className="rw" style={{ cursor: 'pointer' }}
               onClick={() => openContact(c.phone)}>
               <div className="rl">
@@ -1514,8 +1570,8 @@ export default function Dashboard() {
             <div className="ph" style={{ border: 'none', boxShadow: 'none' }}>
               <div className="phi">&#128100;</div>
               <div style={{ fontSize: 14, fontWeight: 600 }}>Aucun contact</div>
-              <div style={{ fontSize: 12, color: 'var(--tm)', marginTop: 4 }}>
-                Les contacts sont crees automatiquement lors des reservations
+              <div style={{ fontSize: 12, color: 'var(--tm)', marginTop: 4, maxWidth: 340, margin: '4px auto' }}>
+                Vos contacts apparaitront ici des qu&apos;un client reservera via WhatsApp ou le chat web.
               </div>
             </div>
           )}
@@ -2032,7 +2088,7 @@ export default function Dashboard() {
             {u?.trial_ends_at && (
               <div className="cfr">
                 <div className="cfl">Fin d&apos;essai</div>
-                <div style={{ fontSize: 13, fontWeight: 600 }}>{u.trial_ends_at}</div>
+                <div style={{ fontSize: 13, fontWeight: 600 }}>{new Date(u.trial_ends_at).toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' })}</div>
               </div>
             )}
           </div>
@@ -2106,7 +2162,7 @@ export default function Dashboard() {
       label: 'CLIENTS',
       items: [
         { id: 'conversations', icon: '\u25C8', label: 'Conversations', badge: convList.length },
-        { id: 'reviews', icon: '\u2605', label: 'Avis', badge: state.reviewQueue.filter(r => !r.responded).length },
+        { id: 'reviews', icon: '\u2605', label: 'Avis', badge: state.reviewQueue.length },
         { id: 'contacts', icon: '\u25C7', label: 'Contacts' },
         { id: 'waitlist', icon: '\u23F1', label: "Liste d'attente", badge: state.waitlistEntries.filter(w => w.status === 'waiting' || !w.status).length },
       ]
