@@ -158,7 +158,8 @@ def now_paris() -> datetime:
     try:
         import zoneinfo
         return datetime.now(zoneinfo.ZoneInfo("Europe/Paris"))
-    except Exception:
+    except Exception as e:
+        logger.warning(f"zoneinfo failed, falling back to UTC: {e}")
         return datetime.utcnow()
 
 
@@ -1916,8 +1917,7 @@ async def notify_owner(rid: str, rest: dict, customer_phone: str, customer_name:
 
             booking_id = f"R{len(rid_bookings)+1}"
             assigned_table = None
-            is_today_booking = booking_date == today_paris().isoformat()
-            if booking_time and is_today_booking:
+            if booking_time:
                 if booking_time in ALL_SLOTS:
                     assigned_table = find_best_table(rid, booking_time, covers, zone_pref)
                 else:
@@ -3329,7 +3329,7 @@ function renderFloorplan(c){
   if(fpMode==='resa'){
     h+='<div style="display:flex;gap:0;margin-bottom:10px"><button style="flex:1;padding:10px;border:1.5px solid '+(fpService==='midi'?'var(--ac)':'var(--b)')+';border-right:none;border-radius:8px 0 0 8px;background:'+(fpService==='midi'?'var(--al)':'var(--card)')+';color:'+(fpService==='midi'?'var(--ac)':'var(--ts)')+';font-size:13px;font-weight:700;cursor:pointer;font-family:var(--f)" data-fpSvc="midi">&#9728; Midi</button>';
     h+='<button style="flex:1;padding:10px;border:1.5px solid '+(fpService==='soir'?'var(--ac)':'var(--b)')+';border-radius:0 8px 8px 0;background:'+(fpService==='soir'?'var(--al)':'var(--card)')+';color:'+(fpService==='soir'?'var(--ac)':'var(--ts)')+';font-size:13px;font-weight:700;cursor:pointer;font-family:var(--f)" data-fpSvc="soir">&#9790; Soir</button></div>';
-    var slots=fpService==='midi'?["all","12:00","12:30","13:00","13:30","14:00"]:["all","19:00","19:30","20:00","20:30","21:00","21:30","22:00"];
+    var slots=fpService==='midi'?["all","12:00","12:15","12:30","12:45","13:00","13:15","13:30","13:45","14:00","14:15","14:30"]:["all","19:00","19:15","19:30","19:45","20:00","20:15","20:30","20:45","21:00","21:15","21:30","21:45","22:00","22:15","22:30"];
     h+='<div style="display:flex;gap:4px;margin-bottom:10px;overflow-x:auto;padding-bottom:4px">';
     slots.forEach(function(s){var label=s==='all'?'Tous':s;var active=fpSlot===s;var cnt=0;if(s!=='all'){var sh=parseInt(s.split(':')[0]);var sm=parseInt(s.split(':')[1]);bookings.forEach(function(b){if(!(b.date||'').startsWith(selectedDate))return;var bt=b.booking_time||b.time||'';if(!bt||!b.table)return;var bh=parseInt(bt.split(':')[0])||0;var bm=parseInt(bt.split(':')[1])||0;if(Math.abs((bh*60+bm)-(sh*60+sm))<=15)cnt++})}h+='<button style="padding:6px 12px;border-radius:20px;border:1.5px solid '+(active?'var(--ac)':'var(--b)')+';background:'+(active?'var(--ac)':'var(--card)')+';color:'+(active?'#fff':'var(--ts)')+';font-size:11px;font-weight:700;cursor:pointer;font-family:var(--f);white-space:nowrap" data-fpSlot="'+s+'">'+label+(s!=='all'&&cnt>0?'<span style="margin-left:4px;padding:1px 5px;border-radius:10px;background:'+(active?'#fff3':'var(--da)')+';color:#fff;font-size:9px;font-weight:800">'+cnt+'</span>':'')+'</button>'});
     h+='</div>';
