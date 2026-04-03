@@ -765,7 +765,7 @@ export default function Dashboard() {
                 <div className="cg3" style={{ padding: 12 }}>
                   {contactList.slice(0, 6).map(c => (
                     <div key={c.phone} className="cc" style={{ cursor: 'pointer' }}
-                      onClick={() => { setSelectedContact(c); setPage('contacts'); }}>
+                      onClick={() => { setSelectedContact(c.phone); setPage('contacts'); }}>
                       <div className="cav" style={{
                         background: (SRC_COLORS[c.source] || '#6B7280') + '20',
                         color: SRC_COLORS[c.source] || '#6B7280',
@@ -1437,7 +1437,9 @@ export default function Dashboard() {
 
   function renderContacts() {
     if (selectedContact) {
-      return renderContactCard(selectedContact);
+      const c = state.contacts[selectedContact];
+      if (!c) { setSelectedContact(null); return null; }
+      return renderContactCard(c);
     }
 
     return (
@@ -1451,7 +1453,7 @@ export default function Dashboard() {
           </div>
           {contactList.map(c => (
             <div key={c.phone} className="rw" style={{ cursor: 'pointer' }}
-              onClick={() => { setSelectedContact(c); setContactEditMode(false); }}>
+              onClick={() => { setSelectedContact(c.phone); setContactEditMode(false); }}>
               <div className="rl">
                 <div className="cav" style={{
                   background: (SRC_COLORS[c.source] || '#6B7280') + '20',
