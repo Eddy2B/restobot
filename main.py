@@ -21,7 +21,7 @@ import asyncpg
 import bcrypt
 from pathlib import Path
 from fastapi import FastAPI, Request, Response, BackgroundTasks
-from fastapi.responses import HTMLResponse, JSONResponse, FileResponse
+from fastapi.responses import HTMLResponse, JSONResponse, FileResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -5048,7 +5048,16 @@ async def lifespan(app: FastAPI):
     logger.info("GuestScale stopped")
 
 
-app = FastAPI(lifespan=lifespan)
+SHOW_DOCS = os.getenv("SHOW_DOCS", "false").lower() == "true"
+
+app = FastAPI(
+    title="GuestScale API",
+    version="1.0.0",
+    lifespan=lifespan,
+    docs_url="/docs" if SHOW_DOCS else None,
+    redoc_url="/redoc" if SHOW_DOCS else None,
+    openapi_url="/openapi.json" if SHOW_DOCS else None,
+)
 app.add_middleware(CORSMiddleware, allow_origins=["https://app.guestscale.com", "https://guestscale.com", "https://www.guestscale.com", "http://localhost:3000", "http://localhost:8000"], allow_methods=["*"], allow_headers=["*"])
 
 
@@ -5775,6 +5784,11 @@ async def admin_dashboard_page(request: Request):
     if not request.query_params.get("k"):
         return Response(status_code=404, content="Not found")
     return HTMLResponse(ADMIN_DASHBOARD_HTML)
+
+
+@app.get("/")
+async def root():
+    return RedirectResponse(url="/login")
 
 
 DASHBOARD_DIR = Path(__file__).parent / "guestscale-dashboard" / "dist"
@@ -8145,8 +8159,14 @@ document.addEventListener('click',function(e){
 # ==============================================================
 
 @app.get("/health")
+@app.get("/api/health")
 async def health():
     return {"status": "ok"}
+
+
+@app.get("/api/info")
+async def api_info():
+    return {"version": "1.0.0", "name": "GuestScale API"}
 
 
 # ==============================================================

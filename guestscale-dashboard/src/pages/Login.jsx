@@ -91,23 +91,24 @@ export default function Login() {
         <div className="lsub">Plateforme IA pour restaurants</div>
 
         {!forgotMode ? (
-          <div className="lcd">
+          <form className="lcd" onSubmit={e => { e.preventDefault(); doLogin(); }} autoComplete="on">
             {error && <div className="lerr visible">{error}</div>}
-            <input className="linp" type="email" placeholder="Email" autoComplete="email"
+            <label htmlFor="login-email" style={{ display: 'block', fontSize: 11, fontWeight: 600, color: '#6B7280', marginBottom: 4, textAlign: 'left' }}>Email</label>
+            <input className="linp" id="login-email" name="email" type="email" placeholder="Email" autoComplete="email"
               style={{ marginBottom: 10 }} value={email}
               onChange={e => { setEmail(e.target.value); setError(''); }} />
+            <label htmlFor="login-password" style={{ display: 'block', fontSize: 11, fontWeight: 600, color: '#6B7280', marginBottom: 4, textAlign: 'left' }}>Mot de passe</label>
             <div style={{ position: 'relative' }}>
-              <input className="linp" ref={pwdRef} type={showPwd ? 'text' : 'password'}
+              <input className="linp" id="login-password" name="password" ref={pwdRef} type={showPwd ? 'text' : 'password'}
                 placeholder="Mot de passe" autoComplete="current-password" value={pwd}
-                onChange={e => { setPwd(e.target.value); setError(''); }}
-                onKeyDown={e => e.key === 'Enter' && doLogin()} />
+                onChange={e => { setPwd(e.target.value); setError(''); }} />
               <button onClick={() => setShowPwd(!showPwd)}
                 style={{ position: 'absolute', right: 12, top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', fontSize: 16, color: '#6B7280', padding: 4 }}
                 type="button" title="Afficher le mot de passe">
                 {showPwd ? '\u{1F512}' : '\u{1F441}'}
               </button>
             </div>
-            <button className="lbtn" type="button" onClick={doLogin}>Se connecter</button>
+            <button className="lbtn" type="submit">Se connecter</button>
             <div style={{ textAlign: 'center', marginTop: 12 }}>
               <a href="#" onClick={e => { e.preventDefault(); setForgotMode(true); setError(''); }}
                 style={{ fontSize: 12, color: '#6B7280', textDecoration: 'none' }}>Mot de passe oublie ?</a>
@@ -119,7 +120,7 @@ export default function Login() {
                 Essai gratuit 30 jours
               </a>
             </div>
-          </div>
+          </form>
         ) : (
           <div style={{ marginTop: 20 }}>
             {forgotError && <div className="lerr visible">{forgotError}</div>}
