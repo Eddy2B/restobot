@@ -87,6 +87,7 @@ export default function Dashboard() {
   const [nrPhone, setNrPhone] = useState('');
   const [nrEmail, setNrEmail] = useState('');
   const [nrSource, setNrSource] = useState('phone');
+  const [nrDate, setNrDate] = useState(state.selectedDate);
 
   // Edit resa form
   const [erName, setErName] = useState('');
@@ -266,7 +267,7 @@ export default function Dashboard() {
   // ---- New reservation ----
   function openNewResa() {
     setNrFirst(''); setNrLast(''); setNrCovers('2'); setNrTime('19:30');
-    setNrPhone(''); setNrEmail(''); setNrSource('phone');
+    setNrPhone(''); setNrEmail(''); setNrSource('phone'); setNrDate(selDate);
     setNewResaOpen(true);
   }
 
@@ -278,7 +279,7 @@ export default function Dashboard() {
         method: 'POST',
         body: JSON.stringify({
           name, covers: parseInt(nrCovers) || 2, time: nrTime,
-          phone: nrPhone, email: nrEmail, source: nrSource, date: selDate
+          phone: nrPhone, email: nrEmail, source: nrSource, date: nrDate
         })
       });
       const d = await r.json();
@@ -318,6 +319,7 @@ export default function Dashboard() {
 
   async function deleteResa() {
     if (!editResaData) return;
+    if (!window.confirm('Supprimer la reservation de ' + (editResaData.name || '') + ' ?')) return;
     try {
       await apiFetch('/api/bookings/delete', {
         method: 'POST',
@@ -2061,7 +2063,10 @@ export default function Dashboard() {
       <div className="modal-bg show" onClick={() => setNewResaOpen(false)}>
         <div className="modal" onClick={e => e.stopPropagation()}>
           <h2>Nouvelle reservation</h2>
-          <div style={{ fontSize: 12, color: 'var(--tm)', marginBottom: 16 }}>Pour le {selDate}</div>
+          <div className="finp-group" style={{ marginBottom: 12 }}>
+            <div className="finp-label">Date</div>
+            <input className="finp" type="date" value={nrDate} onChange={e => setNrDate(e.target.value)} />
+          </div>
           <div className="finp-row">
             <div className="finp-group">
               <div className="finp-label">Prenom</div>

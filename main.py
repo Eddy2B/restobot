@@ -691,61 +691,81 @@ def init_daily_slots(rid: str):
 def find_best_table(rid: str, slot_time: str, covers: int, zone_pref: str = None) -> str | None:
     tables = floor_tables.get(rid, [])
     slots = table_slots.get(rid, {}).get(slot_time, {})
-    candidates = []
+    # Collect all available tables
+    available = []
     for t in tables:
-        if slots.get(t["id"]) != "available":
-            continue
-        if t["seats"] < covers:
-            continue
-        if zone_pref and t["zone"] != zone_pref:
-            continue
-        candidates.append(t)
-    if not candidates and zone_pref:
-        for t in tables:
-            if slots.get(t["id"]) != "available":
-                continue
+        if slots.get(t["id"]) == "available":
+            available.append(t)
+
+    # Try single table (prefer zone, then any)
+    for try_zone in ([zone_pref, None] if zone_pref else [None]):
+        candidates = []
+        for t in available:
             if t["seats"] < covers:
                 continue
+            if try_zone and t["zone"] != try_zone:
+                continue
             candidates.append(t)
-    if not candidates:
-        return None
-    candidates.sort(key=lambda t: t["seats"])
-    return candidates[0]["id"]
+        if candidates:
+            candidates.sort(key=lambda t: t["seats"])
+            return candidates[0]["id"]
+
+    # No single table fits — try combining multiple tables
+    # Sort available by seats descending for greedy combination
+    pool = sorted(available, key=lambda t: t["seats"], reverse=True)
+    if zone_pref:
+        # Prefer tables in requested zone first
+        pool = sorted(pool, key=lambda t: (0 if t["zone"] == zone_pref else 1, -t["seats"]))
+    combo = []
+    total_seats = 0
+    for t in pool:
+        combo.append(t)
+        total_seats += t["seats"]
+        if total_seats >= covers:
+            combo.sort(key=lambda t: t["seats"], reverse=True)
+            return "+".join(t["id"] for t in combo)
+    return None
 
 
 MEAL_DURATION_SLOTS = 8  # 8 x 15min = 2h meal duration
 
+def _split_table_ids(table_id: str) -> list:
+    """Split a possibly combined table id like 'T5+T3' into ['T5','T3']."""
+    return [t.strip() for t in table_id.split("+") if t.strip()]
+
 def assign_table(rid: str, slot_time: str, table_id: str, booking_id: str):
-    """Block a table for 2h starting from the booking slot."""
+    """Block a table (or multi-table combo) for 2h starting from the booking slot."""
     if rid not in table_slots:
         return
-    # Find the index of the starting slot
+    ids = _split_table_ids(table_id)
     try:
         start_idx = ALL_SLOTS.index(slot_time)
     except ValueError:
-        # Slot not in list, just block the exact one
         if slot_time in table_slots[rid]:
-            table_slots[rid][slot_time][table_id] = f"booked:{booking_id}"
+            for tid in ids:
+                table_slots[rid][slot_time][tid] = f"booked:{booking_id}"
         return
-    # Block this table for MEAL_DURATION_SLOTS consecutive slots
     for i in range(MEAL_DURATION_SLOTS):
         idx = start_idx + i
         if idx >= len(ALL_SLOTS):
             break
         s = ALL_SLOTS[idx]
         if s in table_slots[rid]:
-            table_slots[rid][s][table_id] = f"booked:{booking_id}"
+            for tid in ids:
+                table_slots[rid][s][tid] = f"booked:{booking_id}"
 
 
 def release_table(rid: str, slot_time: str, table_id: str):
-    """Release a table for 2h starting from the slot."""
+    """Release a table (or multi-table combo) for 2h starting from the slot."""
     if rid not in table_slots:
         return
+    ids = _split_table_ids(table_id)
     try:
         start_idx = ALL_SLOTS.index(slot_time)
     except ValueError:
         if slot_time in table_slots.get(rid, {}):
-            table_slots[rid][slot_time][table_id] = "available"
+            for tid in ids:
+                table_slots[rid][slot_time][tid] = "available"
         return
     for i in range(MEAL_DURATION_SLOTS):
         idx = start_idx + i
@@ -753,7 +773,8 @@ def release_table(rid: str, slot_time: str, table_id: str):
             break
         s = ALL_SLOTS[idx]
         if s in table_slots[rid]:
-            table_slots[rid][s][table_id] = "available"
+            for tid in ids:
+                table_slots[rid][s][tid] = "available"
 
 
 def get_available_slots(rid: str, covers: int, service: str = None) -> list:
@@ -1903,30 +1924,31 @@ async def notify_owner(rid: str, rest: dict, customer_phone: str, customer_name:
         rid_bookings = bookings.setdefault(rid, [])
         booking_date = extract_booking_date(combined)
 
-        # Anti-duplicate: skip if same name + same date + same time (within 30 min)
-        # Uses name (not phone) so a client can book for someone else on the same day
+        # Anti-duplicate: same phone + same name + same date + exact same time
+        # Different name = not a duplicate (client booking for someone else)
+        # Same name but different time = not a duplicate (midi + soir)
         is_duplicate = False
         candidate_name = (customer_name or customer_phone).strip().lower()
+        candidate_time = booking_time or ""
         for existing in rid_bookings:
+            if existing.get("status") in ("cancelled",):
+                continue
+            if existing.get("date", "") != booking_date:
+                continue
             existing_name = (existing.get("name") or "").strip().lower()
-            if (existing_name == candidate_name
-                and existing.get("date", "") == booking_date
-                and existing.get("status") not in ("cancelled",)):
-                existing_time = existing.get("booking_time") or existing.get("time", "")
-                candidate_time = booking_time or ""
-                if existing_time and candidate_time:
-                    try:
-                        eh, em = existing_time.split(":")
-                        ch, cm = candidate_time.split(":")
-                        diff = abs(int(eh)*60+int(em) - int(ch)*60-int(cm))
-                        if diff <= 30:
-                            is_duplicate = True
-                            break
-                    except Exception:
-                        pass
-                elif not existing_time and not candidate_time:
+            # Different name = different person, never a duplicate
+            if existing_name != candidate_name:
+                continue
+            existing_time = existing.get("booking_time") or existing.get("time", "")
+            # Both have a time: only duplicate if exact same time
+            if existing_time and candidate_time:
+                if existing_time == candidate_time:
                     is_duplicate = True
                     break
+            # Both have no time: same name + same date = duplicate
+            elif not existing_time and not candidate_time:
+                is_duplicate = True
+                break
         if is_duplicate:
             logger.warning(f"Duplicate booking blocked: {customer_name} {booking_date} {booking_time}")
         else:
