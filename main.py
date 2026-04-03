@@ -1886,6 +1886,20 @@ async def notify_owner(rid: str, rest: dict, customer_phone: str, customer_name:
         elif "bar" in combined.lower():
             zone_pref = "bar"
 
+        # Detect special occasion
+        occasion = None
+        combined_lower = combined.lower()
+        if any(k in combined_lower for k in ("anniversaire", "birthday", "compleanno", "geburtstag")):
+            occasion = "anniversaire"
+        elif any(k in combined_lower for k in ("demande en mariage", "proposal", "proposta")):
+            occasion = "mariage"
+        elif any(k in combined_lower for k in ("fiançailles", "fiancailles", "engagement")):
+            occasion = "fiancailles"
+        elif any(k in combined_lower for k in ("saint-valentin", "saint valentin", "valentine")):
+            occasion = "saint-valentin"
+        elif any(k in combined_lower for k in ("fête", "fete", "célébration", "celebration", "party", "festa")):
+            occasion = "fete"
+
         rid_bookings = bookings.setdefault(rid, [])
         booking_date = extract_booking_date(combined)
 
@@ -1936,7 +1950,7 @@ async def notify_owner(rid: str, rest: dict, customer_phone: str, customer_name:
                 "message": message[:200], "timestamp": datetime.utcnow().isoformat(), "date": booking_date,
                 "status": "confirmed" if assigned_table else "pending", "time": booking_time or "",
                 "booking_time": booking_time or "", "covers": covers, "table": assigned_table,
-                "zone": zone_pref, "source": "whatsapp",
+                "zone": zone_pref, "source": "whatsapp", "occasion": occasion,
             }
             rid_bookings.append(new_booking)
             track_stats(rid, is_booking=True)
@@ -6275,6 +6289,8 @@ async def api_update_booking(request: Request):
             if "table" in data:
                 b["table"] = data["table"] or None
                 b["status"] = "confirmed" if data["table"] else "pending"
+            if "occasion" in data:
+                b["occasion"] = data["occasion"] or None
             await db_save_booking(rid, b)
             bump_version(rid)
             return {"status": "updated"}

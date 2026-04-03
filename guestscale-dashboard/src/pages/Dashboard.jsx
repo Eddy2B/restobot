@@ -24,6 +24,20 @@ function zoneColor(zone) {
   return ZONE_COLORS[zone] || ZONE_COLORS.default;
 }
 
+const OCCASION_EMOJI = {
+  anniversaire: '\u{1F382}',
+  mariage: '\u{1F48D}',
+  fiancailles: '\u{1F48D}',
+  'saint-valentin': '\u{2764}\u{FE0F}',
+  fete: '\u{1F389}',
+};
+
+function occasionBadge(occasion) {
+  if (!occasion) return null;
+  const emoji = OCCASION_EMOJI[occasion] || '\u{2728}';
+  return <span title={occasion} style={{ marginLeft: 4 }}>{emoji}</span>;
+}
+
 function initials(name) {
   if (!name) return '?';
   const parts = name.trim().split(/\s+/);
@@ -674,7 +688,7 @@ export default function Dashboard() {
                     <div className="rl">
                       <div className="dot" style={{ background: SRC_COLORS[bk.source] || '#6B7280' }} />
                       <div>
-                        <div style={{ fontSize: 13, fontWeight: 600 }}>{bk.name}</div>
+                        <div style={{ fontSize: 13, fontWeight: 600 }}>{bk.name}{occasionBadge(bk.occasion)}</div>
                         <div style={{ fontSize: 11, color: 'var(--tm)' }}>
                           {timeStr(bk.booking_time || bk.time)} &middot; {bk.covers}p
                           {bk.table ? ' · ' + bk.table : ''}
@@ -926,7 +940,7 @@ export default function Dashboard() {
                 {midiBks.map(bk => (
                   <div key={bk.id} className={'fp-sb-item' + (fpSelectedTable === bk.table ? ' active' : '')}
                     onClick={() => { setFpSelectedTable(bk.table); openEditResa(bk); }}>
-                    <div className="fp-sb-name">{bk.name}</div>
+                    <div className="fp-sb-name">{bk.name}{occasionBadge(bk.occasion)}</div>
                     <div className="fp-sb-meta">
                       <span>{timeStr(bk.booking_time || bk.time)}</span>
                       <span>{bk.covers}p</span>
@@ -981,7 +995,7 @@ export default function Dashboard() {
                     <div className="rl">
                       <div className="dot" style={{ background: SRC_COLORS[bk.source] || '#6B7280' }} />
                       <div>
-                        <div style={{ fontSize: 13, fontWeight: 600 }}>{bk.name}</div>
+                        <div style={{ fontSize: 13, fontWeight: 600 }}>{bk.name}{occasionBadge(bk.occasion)}</div>
                         <div style={{ fontSize: 11, color: 'var(--tm)' }}>
                           {timeStr(bk.booking_time || bk.time)} &middot; {bk.covers} couverts
                           {bk.table ? ' · Table ' + bk.table : ''}
@@ -1065,7 +1079,7 @@ export default function Dashboard() {
                     <div className="rl">
                       <div className="dot" style={{ background: SRC_COLORS[bk.source] || '#6B7280' }} />
                       <div>
-                        <div style={{ fontSize: 13, fontWeight: 600 }}>{bk.name}</div>
+                        <div style={{ fontSize: 13, fontWeight: 600 }}>{bk.name}{occasionBadge(bk.occasion)}</div>
                         <div style={{ fontSize: 11, color: 'var(--tm)' }}>
                           {timeStr(bk.booking_time || bk.time)} &middot; {bk.covers}p
                           {bk.table ? ' · ' + bk.table : ''}
