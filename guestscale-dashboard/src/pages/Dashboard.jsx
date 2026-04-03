@@ -765,7 +765,7 @@ export default function Dashboard() {
                 <div className="cg3" style={{ padding: 12 }}>
                   {contactList.slice(0, 6).map(c => (
                     <div key={c.phone} className="cc" style={{ cursor: 'pointer' }}
-                      onClick={() => { setSelectedContact(c.phone); setPage('contacts'); }}>
+                      onClick={() => { setSelectedContact(c.phone); setPage('contacts'); setContactNoteDraft(c.notes || ''); }}>
                       <div className="cav" style={{
                         background: (SRC_COLORS[c.source] || '#6B7280') + '20',
                         color: SRC_COLORS[c.source] || '#6B7280',
@@ -1453,7 +1453,7 @@ export default function Dashboard() {
           </div>
           {contactList.map(c => (
             <div key={c.phone} className="rw" style={{ cursor: 'pointer' }}
-              onClick={() => { setSelectedContact(c.phone); setContactEditMode(false); }}>
+              onClick={() => { setSelectedContact(c.phone); setContactEditMode(false); setContactNoteDraft(c.notes || ''); }}>
               <div className="rl">
                 <div className="cav" style={{
                   background: (SRC_COLORS[c.source] || '#6B7280') + '20',
@@ -1590,7 +1590,7 @@ export default function Dashboard() {
             <div className="card-t">Notes</div>
           </div>
           <div style={{ padding: 14 }}>
-            <textarea className="dinp" value={contactNoteDraft || c.notes || ''}
+            <textarea className="dinp" value={contactNoteDraft}
               onChange={e => setContactNoteDraft(e.target.value)}
               placeholder="Notes sur ce client..." />
             <button className="ba" style={{ marginTop: 8 }}
