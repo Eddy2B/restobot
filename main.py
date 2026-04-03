@@ -710,20 +710,37 @@ def find_best_table(rid: str, slot_time: str, covers: int, zone_pref: str = None
             candidates.sort(key=lambda t: t["seats"])
             return candidates[0]["id"]
 
-    # No single table fits — try combining multiple tables
-    # Sort available by seats descending for greedy combination
+    # No single table fits — find smallest combination that covers the group
+    # Strategy: take the biggest available table, then find the smallest complement
     pool = sorted(available, key=lambda t: t["seats"], reverse=True)
     if zone_pref:
-        # Prefer tables in requested zone first
         pool = sorted(pool, key=lambda t: (0 if t["zone"] == zone_pref else 1, -t["seats"]))
-    combo = []
-    total_seats = 0
-    for t in pool:
-        combo.append(t)
-        total_seats += t["seats"]
-        if total_seats >= covers:
-            combo.sort(key=lambda t: t["seats"], reverse=True)
-            return "+".join(t["id"] for t in combo)
+    if not pool:
+        return None
+    # Start with the largest table, then add the smallest table that fills the gap
+    best_combo = None
+    best_waste = 999
+    for i, big in enumerate(pool):
+        remaining = covers - big["seats"]
+        if remaining <= 0:
+            continue  # single table would have matched above
+        combo = [big]
+        total = big["seats"]
+        # Sort remaining tables by seats ascending to pick the smallest that fills the gap
+        rest = sorted([t for j, t in enumerate(pool) if j != i], key=lambda t: t["seats"])
+        for t in rest:
+            combo.append(t)
+            total += t["seats"]
+            if total >= covers:
+                break
+        if total >= covers:
+            waste = total - covers
+            if waste < best_waste:
+                best_waste = waste
+                best_combo = list(combo)
+    if best_combo:
+        best_combo.sort(key=lambda t: t["seats"], reverse=True)
+        return "+".join(t["id"] for t in best_combo)
     return None
 
 
@@ -2930,7 +2947,9 @@ var overviewBlocks={daily:true,stats:true,floor:true,bookings:true,contacts:true
 function mergeBookingsIntoFloor(){
   var tableBookings={};
   bookings.forEach(function(b){
-    if(b.table && (b.date||'').startsWith(selectedDate))tableBookings[b.table]=b.name;
+    if(b.table && (b.date||'').startsWith(selectedDate)){
+      b.table.split('+').forEach(function(tid){tableBookings[tid.trim()]=b.name});
+    }
   });
   floorplan.forEach(function(t){
     t.booking_name=tableBookings[t.id]||null;
@@ -3327,7 +3346,7 @@ function fpMergeForService(){
     if(fpSlot!=='all'){var sh=parseInt(fpSlot.split(':')[0])||0;var sm=parseInt(fpSlot.split(':')[1])||0;var bm=parseInt(bt.split(':')[1])||0;if(Math.abs((bh*60+bm)-(sh*60+sm))>90)return false}
     return true;
   });
-  var tb={};filtered.forEach(function(b){if(b.table)tb[b.table]=b.name});
+  var tb={};filtered.forEach(function(b){if(b.table){b.table.split('+').forEach(function(tid){tb[tid.trim()]=b.name})}});
   floorplan.forEach(function(t){t.booking_name=tb[t.id]||null});
 }
 

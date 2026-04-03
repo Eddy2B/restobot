@@ -656,22 +656,25 @@ export default function Dashboard() {
                   <div style={{ fontSize: 12, color: 'var(--ac)', fontWeight: 600 }}>Voir &rarr;</div>
                 </div>
                 <div className="fc">
-                  {state.floorplan.map(t => (
-                    <div key={t.id} className="ftbl" style={{
-                      left: (t.x || 20) + '%',
-                      top: (t.y || 20) + '%',
-                      width: 40 + (t.seats || 4) * 4,
-                      height: 40 + (t.seats || 4) * 3,
-                      borderRadius: t.shape === 'round' ? '50%' : 6,
-                      borderColor: t.booking_name ? '#4ECDC4' : zoneColor(t.zone),
-                      background: t.booking_name ? 'rgba(78,205,196,.1)' : 'rgba(45,125,210,.05)',
-                      color: 'var(--t)',
-                      transform: 'translate(-50%, -50%)',
-                    }}>
-                      <span>{t.id}</span>
-                      <span style={{ fontSize: 8, color: 'var(--tm)' }}>{t.seats}p</span>
-                    </div>
-                  ))}
+                  {state.floorplan.map(t => {
+                    const bk = bookingsForDate.find(b => b.table && b.table.split('+').includes(t.id));
+                    return (
+                      <div key={t.id} className="ftbl" style={{
+                        left: (t.x || 20) + '%',
+                        top: (t.y || 20) + '%',
+                        width: 40 + (t.seats || 4) * 4,
+                        height: 40 + (t.seats || 4) * 3,
+                        borderRadius: t.shape === 'round' ? '50%' : 6,
+                        borderColor: bk ? '#4ECDC4' : zoneColor(t.zone),
+                        background: bk ? 'rgba(78,205,196,.1)' : 'rgba(45,125,210,.05)',
+                        color: 'var(--t)',
+                        transform: 'translate(-50%, -50%)',
+                      }}>
+                        <span>{t.id}</span>
+                        <span style={{ fontSize: 8, color: 'var(--tm)' }}>{t.seats}p</span>
+                      </div>
+                    );
+                  })}
                 </div>
               </div>
             )}
@@ -790,8 +793,8 @@ export default function Dashboard() {
       return fpService === 'midi' ? (h >= 11 && h < 15) : (h >= 18 || h < 4);
     });
 
-    const midiSlots = ['12:00', '12:15', '12:30', '12:45', '13:00'];
-    const soirSlots = ['19:00', '19:15', '19:30', '19:45', '20:00', '20:15', '20:30', '21:00'];
+    const midiSlots = ['12:00','12:15','12:30','12:45','13:00','13:15','13:30','13:45','14:00','14:15','14:30'];
+    const soirSlots = ['19:00','19:15','19:30','19:45','20:00','20:15','20:30','20:45','21:00','21:15','21:30','21:45','22:00','22:15','22:30'];
     const slots = fpService === 'midi' ? midiSlots : soirSlots;
 
     return (
@@ -829,7 +832,7 @@ export default function Dashboard() {
               onMouseLeave={fpMode === 'edit' ? handleFpMouseUp : undefined}
             >
               {tables.map(t => {
-                const booked = midiBks.find(b => b.table === t.id);
+                const booked = midiBks.find(b => b.table && b.table.split('+').includes(t.id));
                 const isSelected = fpMode === 'edit' ? fpEditTable?.id === t.id : fpSelectedTable === t.id;
                 const w = 50 + (t.seats || 4) * 5;
                 const h = 50 + (t.seats || 4) * 4;
@@ -931,38 +934,68 @@ export default function Dashboard() {
             )}
           </div>
 
-          {fpMode === 'resa' && (
-            <div className="fp-sidebar">
-              <Calendar />
-              <div className="fp-sb-header">
-                <div className="fp-sb-title">Reservations</div>
-                <div className="fp-sb-count">{midiBks.length}</div>
+          {fpMode === 'resa' && (() => {
+            const allDayBks = bookingsForDate;
+            const midiAll = allDayBks.filter(b => {
+              const h = parseInt((b.booking_time || b.time || '').split(':')[0]);
+              return h >= 11 && h < 17;
+            }).sort((a, b) => (a.booking_time || a.time || '').localeCompare(b.booking_time || b.time || ''));
+            const soirAll = allDayBks.filter(b => {
+              const h = parseInt((b.booking_time || b.time || '').split(':')[0]);
+              return h >= 17 || h < 4;
+            }).sort((a, b) => (a.booking_time || a.time || '').localeCompare(b.booking_time || b.time || ''));
+            const noTime = allDayBks.filter(b => !(b.booking_time || b.time));
+            const renderBk = (bk, color) => (
+              <div key={bk.id} className={'fp-sb-item' + (fpSelectedTable === bk.table ? ' active' : '')}
+                style={{ borderLeftColor: fpSelectedTable === bk.table ? color : 'transparent' }}
+                onClick={() => { setFpSelectedTable(bk.table); openEditResa(bk); }}>
+                <div className="fp-sb-name">{bk.name}{occasionBadge(bk.occasion)}</div>
+                <div className="fp-sb-meta">
+                  <span>{timeStr(bk.booking_time || bk.time)}</span>
+                  <span>{bk.covers}p</span>
+                  {bk.table ? (
+                    <span className="fp-sb-table">{bk.table}</span>
+                  ) : (
+                    <span className="fp-sb-no-table">Sans table</span>
+                  )}
+                </div>
               </div>
-              <div className="fp-sb-list">
-                {midiBks.map(bk => (
-                  <div key={bk.id} className={'fp-sb-item' + (fpSelectedTable === bk.table ? ' active' : '')}
-                    onClick={() => { setFpSelectedTable(bk.table); openEditResa(bk); }}>
-                    <div className="fp-sb-name">{bk.name}{occasionBadge(bk.occasion)}</div>
-                    <div className="fp-sb-meta">
-                      <span>{timeStr(bk.booking_time || bk.time)}</span>
-                      <span>{bk.covers}p</span>
-                      {bk.table ? (
-                        <span className="fp-sb-table">{bk.table}</span>
-                      ) : (
-                        <span className="fp-sb-no-table">Sans table</span>
-                      )}
-                    </div>
-                  </div>
-                ))}
-                {midiBks.length === 0 && (
-                  <div className="fp-sb-empty">Aucune reservation pour ce service</div>
-                )}
+            );
+            return (
+              <div className="fp-sidebar">
+                <Calendar />
+                <div className="fp-sb-header">
+                  <div className="fp-sb-title">Reservations du jour</div>
+                  <div className="fp-sb-count">{allDayBks.length}</div>
+                </div>
+                <div className="fp-sb-list">
+                  {midiAll.length > 0 && (
+                    <>
+                      <div style={{ padding: '8px 16px', fontSize: 11, fontWeight: 700, color: '#2563EB', background: '#EFF6FF', borderBottom: '1px solid var(--bl)' }}>
+                        &#9728;&#65039; Midi &middot; {midiAll.length} resa{midiAll.length > 1 ? 's' : ''}
+                      </div>
+                      {midiAll.map(bk => renderBk(bk, '#2563EB'))}
+                    </>
+                  )}
+                  {soirAll.length > 0 && (
+                    <>
+                      <div style={{ padding: '8px 16px', fontSize: 11, fontWeight: 700, color: '#6366F1', background: '#EEF2FF', borderBottom: '1px solid var(--bl)' }}>
+                        &#127769; Soir &middot; {soirAll.length} resa{soirAll.length > 1 ? 's' : ''}
+                      </div>
+                      {soirAll.map(bk => renderBk(bk, '#6366F1'))}
+                    </>
+                  )}
+                  {noTime.map(bk => renderBk(bk, 'var(--tm)'))}
+                  {allDayBks.length === 0 && (
+                    <div className="fp-sb-empty">Aucune reservation ce jour</div>
+                  )}
+                </div>
+                <div style={{ padding: 12, borderTop: '1px solid var(--bl)' }}>
+                  <button className="ba" style={{ width: '100%' }} onClick={openNewResa}>+ Nouvelle reservation</button>
+                </div>
               </div>
-              <div style={{ padding: 12, borderTop: '1px solid var(--bl)' }}>
-                <button className="ba" style={{ width: '100%' }} onClick={openNewResa}>+ Nouvelle reservation</button>
-              </div>
-            </div>
-          )}
+            );
+          })()}
         </div>
       </div>
     );
