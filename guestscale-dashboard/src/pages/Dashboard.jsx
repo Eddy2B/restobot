@@ -254,6 +254,7 @@ export default function Dashboard() {
       dispatch({ type: 'SET_DAILY', payload: dailyDraft });
       setEditingDaily(false);
       showToast('Message du jour sauvegarde');
+      await fetchData();
     } catch { showToast('Erreur lors de la sauvegarde'); }
   }
 
@@ -261,6 +262,7 @@ export default function Dashboard() {
     try {
       await apiFetch('/api/broadcast', { method: 'POST', body: JSON.stringify({ message: dailyDraft || state.dailyMsg }) });
       showToast('Message diffuse !');
+      await fetchData();
     } catch { showToast('Erreur de diffusion'); }
   }
 
@@ -346,6 +348,7 @@ export default function Dashboard() {
       dispatch({ type: 'SET_MENU', payload: menuDraft });
       setMenuEditing(false);
       showToast('Menu sauvegarde');
+      await fetchData();
     } catch { showToast('Erreur'); }
   }
 
@@ -365,6 +368,7 @@ export default function Dashboard() {
         if (d.sections) {
           dispatch({ type: 'SET_MENU', payload: d.sections });
           showToast('Menu scanne !');
+          await fetchData();
         } else {
           showToast(d.error || 'Echec du scan');
         }
@@ -381,6 +385,7 @@ export default function Dashboard() {
         body: JSON.stringify({ tables: state.floorplan })
       });
       showToast('Plan sauvegarde');
+      await fetchData();
     } catch { showToast('Erreur'); }
   }
 
@@ -486,6 +491,7 @@ export default function Dashboard() {
       });
       dispatch({ type: 'SET_CONFIG', payload: { _reminders_enabled: !current } });
       showToast(current ? 'Rappels desactives' : 'Rappels actives');
+      await fetchData();
     } catch { showToast('Erreur'); }
   }
 
@@ -496,7 +502,7 @@ export default function Dashboard() {
     const updated = { ...state.restaurantConfig, [field]: val };
     dispatch({ type: 'SET_CONFIG', payload: { [field]: val } });
     apiFetch('/api/config', { method: 'POST', body: JSON.stringify(updated) })
-      .then(() => showToast('Sauvegarde'))
+      .then(() => { showToast('Sauvegarde'); fetchData(); })
       .catch(() => showToast('Erreur'));
   }
 
