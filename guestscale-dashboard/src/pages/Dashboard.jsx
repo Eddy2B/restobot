@@ -788,7 +788,7 @@ export default function Dashboard() {
             </div>
           </div>
 
-          <div style={{ width: 300, flexShrink: 0 }}>
+          <div className="ov-cal-col" style={{ width: 300, flexShrink: 0 }}>
             <Calendar />
             {blocks.contacts && (
               <div className="card">
@@ -1322,7 +1322,7 @@ export default function Dashboard() {
 
     return (
       <div className="card conv-split" style={{ display: 'flex', minHeight: 500 }}>
-        <div style={{ width: 320, borderRight: '1px solid var(--bl)', overflowY: 'auto' }}>
+        <div className="conv-list-panel" style={{ width: 320, borderRight: '1px solid var(--bl)', overflowY: 'auto' }}>
           <div style={{ padding: '14px 16px', borderBottom: '1px solid var(--bl)' }}>
             <div style={{ fontSize: 14, fontWeight: 700 }}>Conversations</div>
             <div style={{ fontSize: 12, color: 'var(--tm)' }}>{sorted.length} conversations</div>
@@ -1506,7 +1506,7 @@ export default function Dashboard() {
       <div>
         {/* Search + filters */}
         <div style={{ marginBottom: 14, display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center' }}>
-          <input className="finp" style={{ flex: 1, minWidth: 200, marginBottom: 0 }}
+          <input className="finp" style={{ flex: 1, minWidth: 0, marginBottom: 0 }}
             placeholder="Rechercher par nom, email ou telephone..."
             value={contactSearch} onChange={e => setContactSearch(e.target.value)} />
           <select className="finp" style={{ width: 'auto', marginBottom: 0, minWidth: 120 }}
