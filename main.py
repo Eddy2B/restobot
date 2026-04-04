@@ -1,6 +1,11 @@
 """
 GuestScale — Multi-Tenant Restaurant AI Platform
 Version 5.0 — Multi-tenant, JWT auth, PostgreSQL
+
+DNS EMAIL CONFIG REQUISE (dans Cloudflare DNS) :
+SPF : TXT guestscale.com -> "v=spf1 include:spf.brevo.com ~all"
+DKIM : TXT brevo._domainkey.guestscale.com -> (cle fournie par Brevo)
+DMARC : TXT _dmarc.guestscale.com -> "v=DMARC1; p=quarantine; rua=mailto:contact@guestscale.com"
 """
 
 import os
@@ -5152,6 +5157,20 @@ app = FastAPI(
     openapi_url="/openapi.json" if SHOW_DOCS else None,
 )
 app.add_middleware(CORSMiddleware, allow_origins=["https://app.guestscale.com", "https://guestscale.com", "https://www.guestscale.com", "http://localhost:3000", "http://localhost:8000"], allow_methods=["*"], allow_headers=["*"])
+
+from starlette.middleware.base import BaseHTTPMiddleware
+
+class SecurityHeadersMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request, call_next):
+        response = await call_next(request)
+        response.headers["X-Frame-Options"] = "DENY"
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+        response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
+        response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+        return response
+
+app.add_middleware(SecurityHeadersMiddleware)
 
 
 # ==============================================================
