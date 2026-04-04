@@ -16,56 +16,110 @@
 .mobile-more-item span{font-size:22px;line-height:1}
 
 @media(max-width:768px){
+  /* Sidebar → bottom tab bar */
   .sidebar{display:none}
   .main{margin-left:0}
   .mobile-nav{display:block}
-  .content{padding:14px;padding-bottom:80px}
-  .topbar{padding:12px 14px}
-  .topbar h1{font-size:16px}
-  .topbar .sp{padding:3px 8px;font-size:11px}
+
+  /* Body text readability */
+  body{font-size:14px}
+
+  /* Topbar compact */
+  .topbar{padding:10px 14px}
+  .topbar h1{font-size:15px}
+  .topbar .sp{padding:3px 8px;font-size:10px}
   .topbar>div:last-child>div:first-child{display:none}
-  .sg{grid-template-columns:repeat(2,1fr);gap:10px;margin-bottom:14px}
-  .sc{padding:14px 12px}
-  .sv{font-size:24px}
-  .sl{font-size:9px;margin-bottom:6px}
-  .ss2{font-size:11px;margin-top:4px}
+
+  /* Content area */
+  .content{padding:12px;padding-bottom:80px;max-width:100%}
+
+  /* Stat cards: 2 cols */
+  .sg{grid-template-columns:repeat(2,1fr);gap:8px;margin-bottom:12px}
+  .sc{padding:12px 10px}
+  .sv{font-size:22px}
+  .sl{font-size:9px;margin-bottom:4px}
+  .ss2{font-size:10px;margin-top:3px}
+
+  /* Cards: 1 col */
   .g2{grid-template-columns:1fr;gap:10px}
   .cg3{grid-template-columns:1fr 1fr}
-  .card-h{padding:12px 14px}
-  .rw{padding:10px 14px}
+  .card-h{padding:10px 14px}
+  .rw{padding:8px 12px}
+  .card{border-radius:10px}
+
+  /* Overview layout stack */
   .ov-layout{flex-direction:column!important}
-  .ov-layout>div:last-child{width:100%!important}
-  .cal-wrap{padding:12px}
-  .cal-num{font-size:11px}
-  .cal-header{margin-bottom:8px}
-  .cal-title{font-size:13px;padding:3px 8px}
+  .ov-layout>div:last-child{width:100%!important;flex-shrink:1!important}
+  .ov-layout>div:first-child{min-width:0!important}
+
+  /* Calendar compact */
+  .cal-wrap{padding:10px;margin-bottom:10px}
+  .cal-num{font-size:10px}
+  .cal-dow{font-size:8px}
+  .cal-header{margin-bottom:6px}
+  .cal-title{font-size:12px;padding:3px 6px}
+  .cal-cell{min-height:28px}
+  .cal-today-btn{font-size:10px;padding:3px 8px}
+
+  /* Floorplan */
   .fp-layout{flex-direction:column}
   .fp-sidebar{width:100%}
   .fp-sb-list{max-height:200px}
-  #fpCanvas{height:320px!important}
+  #fpCanvas{height:280px!important}
+  .ftbl{font-size:8px!important}
+
+  /* Conversations split → stack */
   .conv-split{flex-direction:column!important}
   .conv-split>div:first-child{width:100%!important;max-height:200px;overflow-y:auto;border-right:none!important;border-bottom:1px solid var(--bl)}
   .conv-split>div:last-child{width:100%!important}
-  .modal{width:95vw;padding:20px;border-radius:12px}
+
+  /* Modals */
+  .modal{width:95vw;padding:16px;border-radius:12px}
   .finp-row{grid-template-columns:1fr}
-  .db{padding:12px 14px}
-  .di{width:32px;height:32px;font-size:14px}
-  .fc{height:140px}
+  .finp{font-size:14px;padding:10px 12px}
+
+  /* Daily banner */
+  .db{padding:10px 12px}
+  .di{width:28px;height:28px;font-size:12px}
+
+  /* Floorplan mini */
+  .fc{height:120px}
+  .fm{padding:12px}
+
+  /* Touch targets */
   .nb,.mobile-nav-btn{min-height:44px}
-  .ba{min-height:36px;padding:8px 14px}
-  .cal-cell{min-height:32px}
-  .toast{bottom:80px;right:50%;transform:translateX(50%);text-align:center}
-  .help-btn{bottom:76px}.help-panel{bottom:134px}
+  .ba{min-height:36px;padding:8px 12px;font-size:12px}
+
+  /* Toast above mobile nav */
+  .toast{bottom:80px;right:50%;transform:translateX(50%);text-align:center;max-width:85vw;font-size:12px}
+
+  /* Help button above tab bar */
+  .help-btn{bottom:76px;width:42px;height:42px;font-size:18px}
+  .help-panel{bottom:126px;width:calc(100vw - 24px);right:12px;max-height:60vh}
+
+  /* Search inputs */
+  .finp[style*="min-width"]{min-width:0!important}
+
+  /* Config */
+  .cfr{flex-direction:column;align-items:flex-start;gap:6px}
+  .cfl{font-size:13px}
+  .cfd{font-size:11px}
+
+  /* Prevent any horizontal overflow */
+  .app{overflow-x:hidden;max-width:100vw}
+  table{display:block;overflow-x:auto}
 }
 
 @media(max-width:380px){
-  .content{padding:10px;padding-bottom:80px}
-  .sg{grid-template-columns:1fr 1fr;gap:8px}
-  .sv{font-size:20px}
-  .sc{padding:12px 10px}
-  .cal-num{font-size:10px}
-  .cal-dow{font-size:8px}
-  #fpCanvas{height:260px!important}
-  .fp-sb-list{max-height:160px}
-  .modal{padding:16px}
+  .content{padding:8px;padding-bottom:80px}
+  .sg{grid-template-columns:1fr 1fr;gap:6px}
+  .sv{font-size:18px}
+  .sc{padding:10px 8px}
+  .cal-num{font-size:9px}
+  .cal-dow{font-size:7px}
+  #fpCanvas{height:220px!important}
+  .fp-sb-list{max-height:140px}
+  .modal{padding:14px}
+  .hero h1{font-size:24px}
+  .topbar h1{font-size:14px}
 }
