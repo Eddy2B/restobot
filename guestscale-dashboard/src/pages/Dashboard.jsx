@@ -152,6 +152,9 @@ export default function Dashboard() {
   const [obDesc, setObDesc] = useState('');
   const [obTone, setObTone] = useState('');
 
+  // Conversation channel filter
+  const [convChannel, setConvChannel] = useState('all');
+
   // Campaigns
   const [campaignList, setCampaignList] = useState([]);
   const [campaignMode, setCampaignMode] = useState('list'); // list, create
@@ -901,7 +904,10 @@ export default function Dashboard() {
                     onClick={() => { openConv(phone); setPage('conversations'); }}>
                     <div className="cav" style={{ background: 'var(--acg)', color: '#fff' }}>{initials(name)}</div>
                     <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ fontSize: 13, fontWeight: 600 }}>{name}</div>
+                      <div style={{ display: 'flex', alignItems: 'center', fontSize: 13, fontWeight: 600 }}>
+                        <span style={{ width: 6, height: 6, borderRadius: 3, background: {'whatsapp':'#25D366','instagram':'#E1306C'}[cv.source || 'whatsapp'] || '#25D366', marginRight: 4, flexShrink: 0 }} />
+                        {name}
+                      </div>
                       <div className="cmsg">{lastMsg}</div>
                     </div>
                     {cv.count > 0 && (
@@ -1723,81 +1729,131 @@ export default function Dashboard() {
   }
 
   function renderConversations() {
+    const channels = [
+        { id: 'all', label: 'Tous', icon: '' },
+        { id: 'whatsapp', label: 'WhatsApp', icon: '\u{25CF}', color: '#25D366' },
+        { id: 'instagram', label: 'Instagram', icon: '\u{25CF}', color: '#E1306C' },
+        { id: 'messenger', label: 'Messenger', icon: '\u{25CF}', color: '#0084FF' },
+        { id: 'phone', label: 'Telephone', icon: '\u{25CF}', color: '#2D7DD2' },
+        { id: 'email', label: 'Email', icon: '\u{25CF}', color: '#6B7280' },
+    ];
+
+    // Filter conversations by channel
     const sorted = [...convList].sort((a, b) => {
-      const aLast = a[1].messages?.[a[1].messages.length - 1]?.time || '';
-      const bLast = b[1].messages?.[b[1].messages.length - 1]?.time || '';
-      return bLast.localeCompare(aLast);
+        const aLast = a[1].messages?.[a[1].messages.length - 1]?.time || '';
+        const bLast = b[1].messages?.[b[1].messages.length - 1]?.time || '';
+        return bLast.localeCompare(aLast);
     });
+    const filtered = convChannel === 'all' ? sorted : sorted.filter(([, cv]) => (cv.source || 'whatsapp') === convChannel);
 
     const activeConv = selectedConv ? state.conversations[selectedConv] : null;
     const activeContact = selectedConv ? state.contacts[selectedConv] : null;
 
+    // Empty states for unconnected channels
+    const channelEmpty = {
+        instagram: { icon: '\u{1F4F8}', title: 'Instagram Direct Messages', desc: "Connectez votre compte Instagram pour recevoir et repondre aux DM automatiquement.", cta: 'Configurer Instagram', action: () => setPage('config') },
+        messenger: { icon: '\u{1F4AC}', title: 'Facebook Messenger', desc: "Connectez votre page Facebook pour que l'agent IA reponde aux messages Messenger.", cta: 'Configurer Messenger', action: () => setPage('config') },
+        phone: { icon: '\u{1F4DE}', title: 'Agent vocal IA', desc: "Activez l'agent vocal pour que vos appels soient pris en charge automatiquement.", cta: "Demander l'activation", action: () => window.location.href = 'mailto:contact@guestscale.com?subject=Activation agent vocal' },
+        email: { icon: '\u{2709}', title: 'Email', desc: "Les reponses automatiques par email arrivent bientot.", cta: null },
+    };
+
+    const showEmpty = convChannel !== 'all' && convChannel !== 'whatsapp' && filtered.length === 0;
+
+    if (showEmpty && channelEmpty[convChannel]) {
+        const ce = channelEmpty[convChannel];
+        return (
+            <div>
+                {/* Channel tabs */}
+                <div style={{ display: 'flex', gap: 6, marginBottom: 14, flexWrap: 'wrap' }}>
+                    {channels.map(ch => (
+                        <button key={ch.id} className="ba" style={{
+                            background: convChannel === ch.id ? 'var(--acg)' : 'var(--bg)',
+                            color: convChannel === ch.id ? '#fff' : 'var(--ts)', border: '1px solid var(--b)',
+                            display: 'flex', alignItems: 'center', gap: 4,
+                        }} onClick={() => setConvChannel(ch.id)}>
+                            {ch.color && <span style={{ color: ch.color, fontSize: 8 }}>{ch.icon}</span>}
+                            {ch.label}
+                        </button>
+                    ))}
+                </div>
+                <div className="ph">
+                    <div className="phi">{ce.icon}</div>
+                    <div style={{ fontSize: 16, fontWeight: 700, marginBottom: 8 }}>{ce.title}</div>
+                    <div style={{ fontSize: 13, color: 'var(--tm)', maxWidth: 400, margin: '0 auto 16px', lineHeight: 1.6 }}>{ce.desc}</div>
+                    {ce.cta && <button className="ba" onClick={ce.action}>{ce.cta}</button>}
+                </div>
+            </div>
+        );
+    }
+
     return (
-      <div className="card conv-split" style={{ display: 'flex', minHeight: 500 }}>
-        <div className="conv-list-panel" style={{ width: 320, borderRight: '1px solid var(--bl)', overflowY: 'auto' }}>
-          <div style={{ padding: '14px 16px', borderBottom: '1px solid var(--bl)' }}>
-            <div style={{ fontSize: 14, fontWeight: 700 }}>Conversations</div>
-            <div style={{ fontSize: 12, color: 'var(--tm)' }}>{sorted.length} conversations</div>
-          </div>
-          {sorted.map(([phone, cv]) => {
-            const contact = state.contacts[phone];
-            const name = contact?.name || phone;
-            const lastMsg = cv.last_message || (cv.messages?.length > 0 ? cv.messages[cv.messages.length - 1].content || cv.messages[cv.messages.length - 1].text : '');
-            const lastTime = cv.messages?.length > 0 ? cv.messages[cv.messages.length - 1].time : '';
-            return (
-              <div key={phone}
-                className={'conv-list-item' + (selectedConv === phone ? ' selected' : '')}
-                onClick={() => openConv(phone)}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                  <div className="cav" style={{ background: 'var(--acg)', color: '#fff', width: 36, height: 36 }}>{initials(name)}</div>
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                      <div style={{ fontSize: 13, fontWeight: 600 }}>{name}</div>
-                      {lastTime && <div style={{ fontSize: 10, color: 'var(--tm)' }}>{lastTime}</div>}
-                    </div>
-                    <div className="cmsg">{lastMsg}</div>
-                  </div>
-                </div>
-              </div>
-            );
-          })}
-          {sorted.length === 0 && (
-            <div style={{ padding: 30, textAlign: 'center', color: 'var(--tm)', fontSize: 12 }}>
-              Activez l&apos;agent WhatsApp pour commencer a recevoir des messages
+        <div>
+            {/* Channel tabs */}
+            <div style={{ display: 'flex', gap: 6, marginBottom: 14, flexWrap: 'wrap' }}>
+                {channels.map(ch => {
+                    const count = ch.id === 'all' ? sorted.length : sorted.filter(([, cv]) => (cv.source || 'whatsapp') === ch.id).length;
+                    return (
+                        <button key={ch.id} className="ba" style={{
+                            background: convChannel === ch.id ? 'var(--acg)' : 'var(--bg)',
+                            color: convChannel === ch.id ? '#fff' : 'var(--ts)', border: '1px solid var(--b)',
+                            display: 'flex', alignItems: 'center', gap: 4,
+                        }} onClick={() => setConvChannel(ch.id)}>
+                            {ch.color && <span style={{ color: convChannel === ch.id ? '#fff' : ch.color, fontSize: 8 }}>{ch.icon}</span>}
+                            {ch.label}
+                            {count > 0 && <span style={{ fontSize: 10, opacity: 0.7 }}>({count})</span>}
+                        </button>
+                    );
+                })}
             </div>
-          )}
-        </div>
-        <div style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
-          {activeConv ? (
-            <>
-              <div style={{ padding: '14px 18px', borderBottom: '1px solid var(--bl)', display: 'flex', alignItems: 'center', gap: 10 }}>
-                <div className="cav" style={{ background: 'var(--acg)', color: '#fff' }}>{initials(activeContact?.name || selectedConv)}</div>
-                <div>
-                  <div style={{ fontSize: 14, fontWeight: 700 }}>{activeContact?.name || selectedConv}</div>
-                  <div style={{ fontSize: 11, color: 'var(--tm)' }}>{selectedConv}</div>
+
+            <div className="card conv-split" style={{ display: 'flex', minHeight: 500 }}>
+                <div className="conv-list-panel" style={{ width: 320, borderRight: '1px solid var(--bl)', overflowY: 'auto' }}>
+                    {filtered.map(([phone, cv]) => {
+                        const ct = state.contacts[phone];
+                        const lastMsg = cv.messages?.[cv.messages.length - 1];
+                        const srcColor = {'whatsapp':'#25D366','instagram':'#E1306C','messenger':'#0084FF','phone':'#2D7DD2','widget':'#F59E0B'}[cv.source || 'whatsapp'] || '#6B7280';
+                        return (
+                            <div key={phone} className={'conv-list-item' + (selectedConv === phone ? ' selected' : '')}
+                                onClick={() => openConv(phone)}>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                                    <span style={{ width: 6, height: 6, borderRadius: 3, background: srcColor, flexShrink: 0 }} />
+                                    <div style={{ fontSize: 13, fontWeight: 600 }}>{ct?.name || phone}</div>
+                                </div>
+                                <div className="cmsg">{lastMsg?.content || lastMsg?.text || '...'}</div>
+                            </div>
+                        );
+                    })}
+                    {filtered.length === 0 && (
+                        <div style={{ padding: 30, textAlign: 'center', color: 'var(--tm)', fontSize: 12 }}>
+                            Aucune conversation
+                        </div>
+                    )}
                 </div>
-              </div>
-              <div style={{ flex: 1, overflowY: 'auto', padding: 18, display: 'flex', flexDirection: 'column', gap: 8 }}>
-                {(activeConv.messages || []).map((msg, i) => (
-                  <div key={i} className={'bubble ' + (msg.role === 'user' || msg.role === 'client' ? 'bubble-user' : 'bubble-bot')}>
-                    {msg.content || msg.text}
-                    {msg.time && <div style={{ fontSize: 9, opacity: 0.6, marginTop: 4 }}>{msg.time}</div>}
-                  </div>
-                ))}
-                {(!activeConv.messages || activeConv.messages.length === 0) && (
-                  <div style={{ textAlign: 'center', color: 'var(--tm)', fontSize: 12, marginTop: 40 }}>
-                    Pas de messages
-                  </div>
-                )}
-              </div>
-            </>
-          ) : (
-            <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--tm)', fontSize: 13 }}>
-              Selectionnez une conversation
+                <div style={{ flex: 1, overflowY: 'auto', padding: 18, display: 'flex', flexDirection: 'column', gap: 8 }}>
+                    {activeConv ? (
+                        <>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '0 0 14px', borderBottom: '1px solid var(--bl)', marginBottom: 8 }}>
+                                <div className="cav" style={{ background: 'var(--acg)', color: '#fff' }}>{initials(activeContact?.name || selectedConv)}</div>
+                                <div>
+                                    <div style={{ fontSize: 14, fontWeight: 700 }}>{activeContact?.name || selectedConv}</div>
+                                    <div style={{ fontSize: 11, color: 'var(--tm)' }}>{selectedConv}</div>
+                                </div>
+                            </div>
+                            {(activeConv.messages || []).map((msg, i) => (
+                                <div key={i} className={'bubble ' + (msg.role === 'user' || msg.role === 'client' ? 'bubble-user' : 'bubble-bot')}>
+                                    {msg.content || msg.text}
+                                    {msg.time && <div style={{ fontSize: 9, opacity: 0.6, marginTop: 4 }}>{msg.time}</div>}
+                                </div>
+                            ))}
+                        </>
+                    ) : (
+                        <div style={{ textAlign: 'center', color: 'var(--tm)', fontSize: 13, marginTop: 60 }}>
+                            Selectionnez une conversation
+                        </div>
+                    )}
+                </div>
             </div>
-          )}
         </div>
-      </div>
     );
   }
 
@@ -2318,6 +2374,46 @@ export default function Dashboard() {
             <div className={'tog' + (cfg.google_review_link ? ' on' : '')} style={{ opacity: cfg.google_review_link ? 1 : 0.5 }}>
               <div className="togd" />
             </div>
+          </div>
+        </div>
+
+        <div className="cfs">
+          <div className="cft">Canaux de communication</div>
+          <div className="cfsb">Gerez vos canaux de contact client</div>
+          <div className="cfr">
+            <div>
+              <div className="cfl">WhatsApp</div>
+              <div className="cfd">{cfg.phone || 'Non configure'}</div>
+            </div>
+            <span className="badge" style={{ background: 'var(--okb)', color: 'var(--ok)' }}>Actif</span>
+          </div>
+          <div className="cfr">
+            <div>
+              <div className="cfl">Instagram DM</div>
+              <div className="cfd">Connectez votre compte Instagram Business</div>
+            </div>
+            <a href="mailto:contact@guestscale.com?subject=Connexion Instagram" className="ba" style={{ fontSize: 11, padding: '4px 10px', textDecoration: 'none' }}>Connecter</a>
+          </div>
+          <div className="cfr">
+            <div>
+              <div className="cfl">Facebook Messenger</div>
+              <div className="cfd">Connectez votre page Facebook</div>
+            </div>
+            <a href="mailto:contact@guestscale.com?subject=Connexion Messenger" className="ba" style={{ fontSize: 11, padding: '4px 10px', textDecoration: 'none' }}>Connecter</a>
+          </div>
+          <div className="cfr">
+            <div>
+              <div className="cfl">Agent Vocal IA</div>
+              <div className="cfd">Option premium — L&apos;IA repond au telephone 24h/24</div>
+            </div>
+            <a href="mailto:contact@guestscale.com?subject=Activation agent vocal" className="ba" style={{ fontSize: 11, padding: '4px 10px', textDecoration: 'none' }}>Demander</a>
+          </div>
+          <div className="cfr">
+            <div>
+              <div className="cfl">Email</div>
+              <div className="cfd">Bientot disponible</div>
+            </div>
+            <span className="badge" style={{ background: 'var(--bl)', color: 'var(--tm)' }}>Bientot</span>
           </div>
         </div>
 
