@@ -61,6 +61,11 @@ export default function Dashboard() {
   // Time display
   const [now, setNow] = useState(new Date());
 
+  // Theme
+  const [darkMode, setDarkMode] = useState(() => {
+    try { return localStorage.getItem('gs_theme') === 'dark'; } catch { return false; }
+  });
+
   // Mobile more drawer
   const [moreOpen, setMoreOpen] = useState(false);
 
@@ -226,6 +231,12 @@ export default function Dashboard() {
     const iv = setInterval(() => setNow(new Date()), 30000);
     return () => clearInterval(iv);
   }, []);
+
+  // ---- Theme persistence ----
+  useEffect(() => {
+    document.documentElement.setAttribute('data-theme', darkMode ? 'dark' : 'light');
+    try { localStorage.setItem('gs_theme', darkMode ? 'dark' : 'light'); } catch {}
+  }, [darkMode]);
 
   // ---- Auto-logout after 2h inactivity ----
   useEffect(() => {
@@ -3225,6 +3236,13 @@ export default function Dashboard() {
           <h1>{PAGE_TITLES[page] || page}</h1>
           <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
             {statusPill()}
+            <button onClick={() => setDarkMode(!darkMode)} style={{
+                background: 'none', border: '1px solid var(--b)', borderRadius: 8,
+                padding: '4px 8px', cursor: 'pointer', fontSize: 14, color: 'var(--tm)',
+                display: 'flex', alignItems: 'center',
+            }} title={darkMode ? 'Mode clair' : 'Mode sombre'}>
+                {darkMode ? '\u2600' : '\u263D'}
+            </button>
             <div style={{ fontSize: 13, color: 'var(--tm)', fontWeight: 600 }}>{fmtNow()}</div>
           </div>
         </div>
