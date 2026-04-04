@@ -134,6 +134,8 @@ export default function Dashboard() {
 
   // Stats
   const [statsHistory, setStatsHistory] = useState([]);
+  const [statsRange, setStatsRange] = useState('30');
+  const [statsPeriod, setStatsPeriod] = useState(null);
 
   // Account
   const [acOldPwd, setAcOldPwd] = useState('');
@@ -638,11 +640,15 @@ export default function Dashboard() {
   // ---- Stats ----
   useEffect(() => {
     if (page === 'stats') {
-      apiFetch('/api/stats/history').then(r => r.ok ? r.json() : null).then(d => {
-        if (d && d.history) setStatsHistory(d.history);
-      }).catch(() => {});
+      const days = parseInt(statsRange) || 30;
+      const from = fmtDate(new Date(Date.now() - days * 86400000));
+      const to = fmtDate(new Date());
+      apiFetch('/api/stats/history?from=' + from + '&to=' + to)
+        .then(r => r.ok ? r.json() : null)
+        .then(d => { if (d) { setStatsHistory(d.history || []); setStatsPeriod(d.period || null); } })
+        .catch(() => {});
     }
-  }, [page]);
+  }, [page, statsRange]);
 
   // ---- Account ----
   async function changePassword() {
@@ -1260,6 +1266,15 @@ export default function Dashboard() {
             ))}
             <div style={{ flex: 1 }} />
             <button className="ba" onClick={openNewResa}>+ Nouvelle</button>
+            <button className="ba" style={{ background: 'var(--bg)', color: 'var(--ts)', border: '1px solid var(--b)' }}
+              onClick={() => {
+                apiFetch('/api/bookings/export').then(r => r.blob()).then(blob => {
+                  const a = document.createElement('a');
+                  a.href = URL.createObjectURL(blob);
+                  a.download = 'reservations_guestscale.csv';
+                  a.click();
+                });
+              }}>Exporter</button>
         </div>
 
         {/* Navigation arrows + title */}
@@ -1843,6 +1858,15 @@ export default function Dashboard() {
             <option value="visits">Tri : Visites</option>
             <option value="recent">Tri : Recent</option>
           </select>
+          <button className="ba" style={{ flexShrink: 0 }}
+            onClick={() => {
+              apiFetch('/api/contacts/export').then(r => r.blob()).then(blob => {
+                const a = document.createElement('a');
+                a.href = URL.createObjectURL(blob);
+                a.download = 'contacts_guestscale.csv';
+                a.click();
+              });
+            }}>Exporter CSV</button>
         </div>
         {allTags.length > 0 && (
           <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 14 }}>
@@ -2217,6 +2241,15 @@ export default function Dashboard() {
               <div className="togd" />
             </div>
           </div>
+          <div className="cfr">
+            <div>
+              <div className="cfl">Demandes d&apos;avis automatiques</div>
+              <div className="cfd">Envoyer une demande d&apos;avis WhatsApp apres chaque repas</div>
+            </div>
+            <div className={'tog' + (cfg.google_review_link ? ' on' : '')} style={{ opacity: cfg.google_review_link ? 1 : 0.5 }}>
+              <div className="togd" />
+            </div>
+          </div>
         </div>
 
         <div className="cfs">
@@ -2229,6 +2262,8 @@ export default function Dashboard() {
             { key: 'hours', label: 'Horaires', desc: cfg.hours || 'Non renseignes' },
             { key: 'description', label: 'Description', desc: cfg.description || 'Non renseignee' },
             { key: 'tone', label: "Ton de l'agent IA", desc: cfg.tone || 'Non renseigne' },
+            { key: 'google_review_link', label: 'Lien Google Review', desc: cfg.google_review_link || 'Non configure — requis pour les avis automatiques' },
+            { key: 'avg_ticket', label: 'Ticket moyen (\u20AC)', desc: cfg.avg_ticket || '25' },
           ].map(item => (
             <div key={item.key} className="cfr" style={{ cursor: 'pointer' }}
               onClick={() => editConfigField(item.key, item.label)}>
@@ -2245,138 +2280,97 @@ export default function Dashboard() {
   }
 
   function renderStats() {
-    const todayBookings = state.bookings.filter(b => (b.date || '').startsWith(todayStr));
-    const todayCovers = todayBookings.reduce((s, b) => s + (b.covers || 0), 0);
-    const sources = {};
-    state.bookings.forEach(b => {
-      const src = b.source || 'other';
-      sources[src] = (sources[src] || 0) + 1;
-    });
-    const totalBookings = state.bookings.length;
-
-    const maxHistory = statsHistory.length > 0 ? Math.max(...statsHistory.map(h => h.bookings || 0), 1) : 1;
+    const period = statsPeriod;
+    const maxH = statsHistory.length > 0 ? Math.max(...statsHistory.map(h => h.bookings || 0), 1) : 1;
 
     return (
       <div>
-        <div className="card" style={{ marginBottom: 14 }}>
-          <div className="card-h">
-            <div className="card-t">Recap du jour</div>
+        {/* Range selector */}
+        <div style={{ display: 'flex', gap: 6, marginBottom: 14, flexWrap: 'wrap' }}>
+          {[{v:'1',l:"Aujourd'hui"},{v:'7',l:'7 jours'},{v:'30',l:'30 jours'},{v:'90',l:'3 mois'},{v:'365',l:'12 mois'}].map(r => (
+            <button key={r.v} className="ba"
+              style={{ background: statsRange === r.v ? 'var(--acg)' : 'var(--bg)', color: statsRange === r.v ? '#fff' : 'var(--ts)', border: '1px solid var(--b)' }}
+              onClick={() => setStatsRange(r.v)}>{r.l}</button>
+          ))}
+        </div>
+
+        {/* KPIs */}
+        {period && (
+          <div className="sg" style={{ marginBottom: 14 }}>
+            <div className="sc"><div className="sl">Reservations</div><div className="sv" style={{color:'var(--ac)'}}>{period.total_bookings}</div><div className="ss2">sur la periode</div></div>
+            <div className="sc"><div className="sl">Couverts</div><div className="sv" style={{color:'var(--ok)'}}>{period.total_covers}</div><div className="ss2">{period.avg_covers_per_day}/jour en moy.</div></div>
+            <div className="sc"><div className="sl">CA estime</div><div className="sv" style={{color:'var(--bl2)'}}>{period.estimated_revenue}&euro;</div><div className="ss2">a {period.avg_ticket}&euro;/couvert</div></div>
+            <div className="sc"><div className="sl">No-show</div><div className="sv" style={{color:'var(--da)'}}>{period.noshow_rate}%</div><div className="ss2">{period.noshow_count} sur {period.total_bookings}</div></div>
           </div>
-          <div style={{ padding: 18 }}>
-            <div className="sg" style={{ gridTemplateColumns: 'repeat(4, 1fr)', marginBottom: 0 }}>
-              <div className="sc">
-                <div className="sl">Reservations</div>
-                <div className="sv">{todayBookings.length}</div>
-                <div className="ss2">Aujourd&apos;hui</div>
+        )}
+
+        {/* History chart */}
+        <div className="card" style={{ marginBottom: 14, padding: 18 }}>
+          <div className="card-t" style={{ marginBottom: 14 }}>Evolution des reservations</div>
+          <div style={{ display: 'flex', alignItems: 'flex-end', gap: 2, height: 140 }}>
+            {statsHistory.slice(-30).map((h, i) => (
+              <div key={i} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2 }}>
+                <div style={{ fontSize: 8, color: 'var(--tm)', fontWeight: 600 }}>{h.bookings || ''}</div>
+                <div style={{ width: '100%', height: Math.max((h.bookings || 0) / maxH * 100, 3) + '%', background: 'var(--ac)', borderRadius: '3px 3px 0 0', minHeight: 3 }} />
+                <div style={{ fontSize: 7, color: 'var(--tm)' }}>{(h.date || '').slice(8,10)}</div>
               </div>
-              <div className="sc">
-                <div className="sl">Couverts</div>
-                <div className="sv">{todayCovers}</div>
-                <div className="ss2">Total</div>
-              </div>
-              <div className="sc">
-                <div className="sl">Conversations</div>
-                <div className="sv">{convList.length}</div>
-                <div className="ss2">Actives</div>
-              </div>
-              <div className="sc">
-                <div className="sl">Contacts</div>
-                <div className="sv">{contactList.length}</div>
-                <div className="ss2">CRM</div>
-              </div>
-            </div>
+            ))}
           </div>
         </div>
 
-        <div className="card" style={{ marginBottom: 14 }}>
-          <div className="card-h">
-            <div className="card-t">Historique des reservations</div>
-          </div>
-          <div style={{ padding: 18 }}>
-            {statsHistory.length > 0 ? (
-              <div style={{ display: 'flex', alignItems: 'flex-end', gap: 4, height: 160 }}>
-                {statsHistory.slice(-30).map((h, i) => {
-                  const pct = ((h.bookings || 0) / maxHistory) * 100;
-                  return (
-                    <div key={i} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
-                      <div style={{
-                        width: '100%', maxWidth: 24,
-                        height: pct + '%', minHeight: 4,
-                        background: 'var(--acg)', borderRadius: '4px 4px 0 0',
-                      }} title={h.date + ': ' + (h.bookings || 0) + ' reservations'} />
-                      {i % 5 === 0 && (
-                        <div style={{ fontSize: 8, color: 'var(--tm)', marginTop: 4, whiteSpace: 'nowrap' }}>
-                          {h.date ? h.date.slice(5) : ''}
-                        </div>
-                      )}
+        {/* Source + Zone breakdown */}
+        {period && (
+          <div className="g2" style={{ marginBottom: 14 }}>
+            <div className="card" style={{ padding: 18 }}>
+              <div className="card-t" style={{ marginBottom: 14 }}>Par source</div>
+              {Object.entries(period.sources || {}).sort((a,b) => b[1]-a[1]).map(([src, count]) => {
+                const pct = Math.round(count / Math.max(period.total_bookings, 1) * 100);
+                const col = {'whatsapp':'#25D366','web':'#2563EB','phone':'#A8A29E','walk-in':'#78716C','zenchef':'#FF6B35'}[src] || '#6B7280';
+                return (
+                  <div key={src} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+                    <div style={{ width: 70, fontSize: 11, fontWeight: 600, color: 'var(--ts)' }}>{src}</div>
+                    <div style={{ flex: 1, height: 24, background: 'var(--bl)', borderRadius: 6, overflow: 'hidden' }}>
+                      <div style={{ width: pct + '%', height: '100%', background: col, borderRadius: 6, minWidth: 2 }} />
                     </div>
-                  );
-                })}
-              </div>
-            ) : (
-              <div style={{ textAlign: 'center', color: 'var(--tm)', fontSize: 13, padding: 30 }}>
-                Aucune donnee historique
-              </div>
-            )}
-          </div>
-        </div>
-
-        <div className="g2">
-          <div className="card">
-            <div className="card-h">
-              <div className="card-t">Repartition par source</div>
+                    <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--t)', width: 50, textAlign: 'right' }}>{count} ({pct}%)</div>
+                  </div>
+                );
+              })}
             </div>
-            <div style={{ padding: 14 }}>
-              {Object.entries(sources).map(([src, count]) => (
-                <div key={src} style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10 }}>
-                  <div className="dot" style={{ background: SRC_COLORS[src] || '#6B7280', width: 8, height: 8 }} />
-                  <div style={{ flex: 1 }}>
-                    <div style={{ fontSize: 13, fontWeight: 600 }}>{SRC_LABELS[src] || src}</div>
-                    <div style={{ height: 6, borderRadius: 3, background: 'var(--bl)', marginTop: 4 }}>
-                      <div style={{
-                        height: '100%', borderRadius: 3,
-                        background: SRC_COLORS[src] || '#6B7280',
-                        width: (totalBookings > 0 ? (count / totalBookings * 100) : 0) + '%',
-                      }} />
+            <div className="card" style={{ padding: 18 }}>
+              <div className="card-t" style={{ marginBottom: 14 }}>Par zone</div>
+              {Object.entries(period.zones || {}).sort((a,b) => b[1]-a[1]).map(([zone, count]) => {
+                const pct = Math.round(count / Math.max(period.total_bookings, 1) * 100);
+                return (
+                  <div key={zone} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+                    <div style={{ width: 70, fontSize: 11, fontWeight: 600, color: 'var(--ts)', textTransform: 'capitalize' }}>{zone}</div>
+                    <div style={{ flex: 1, height: 24, background: 'var(--bl)', borderRadius: 6, overflow: 'hidden' }}>
+                      <div style={{ width: pct + '%', height: '100%', background: 'var(--ac)', borderRadius: 6, minWidth: 2 }} />
                     </div>
+                    <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--t)', width: 50, textAlign: 'right' }}>{count} ({pct}%)</div>
                   </div>
-                  <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--tm)', minWidth: 40, textAlign: 'right' }}>
-                    {count} ({totalBookings > 0 ? Math.round(count / totalBookings * 100) : 0}%)
-                  </div>
-                </div>
-              ))}
-              {Object.keys(sources).length === 0 && (
-                <div style={{ textAlign: 'center', color: 'var(--tm)', fontSize: 12 }}>Aucune donnee</div>
-              )}
+                );
+              })}
             </div>
           </div>
+        )}
 
-          <div className="card">
-            <div className="card-h">
-              <div className="card-t">Communications</div>
-            </div>
-            <div style={{ padding: 14 }}>
-              <div className="cfr">
-                <div className="cfl">Messages totaux</div>
-                <div style={{ fontSize: 16, fontWeight: 700 }}>
-                  {convList.reduce((a, [, cv]) => a + (cv.count || cv.messages?.length || 0), 0)}
+        {/* Top clients */}
+        {period && period.top_clients?.length > 0 && (
+          <div className="card" style={{ padding: 18 }}>
+            <div className="card-t" style={{ marginBottom: 14 }}>Top clients</div>
+            {period.top_clients.map((c, i) => (
+              <div key={i} className="rw">
+                <div className="rl">
+                  <div style={{ width: 24, height: 24, borderRadius: 6, background: 'var(--al)', color: 'var(--ac)',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 11, fontWeight: 700 }}>{i + 1}</div>
+                  <div style={{ fontSize: 13, fontWeight: 600 }}>{c.name}</div>
                 </div>
+                <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--ac)' }}>{c.visits} visites</div>
               </div>
-              <div className="cfr">
-                <div className="cfl">Conversations</div>
-                <div style={{ fontSize: 16, fontWeight: 700 }}>{convList.length}</div>
-              </div>
-              <div className="cfr">
-                <div className="cfl">Avis envoyes</div>
-                <div style={{ fontSize: 16, fontWeight: 700 }}>{state.reviewQueue.filter(r => r.sent).length}</div>
-              </div>
-              <div className="cfr" style={{ borderBottom: 'none' }}>
-                <div className="cfl">Rappels actifs</div>
-                <div style={{ fontSize: 16, fontWeight: 700 }}>{state.restaurantConfig._reminders_enabled ? 'Oui' : 'Non'}</div>
-              </div>
-            </div>
+            ))}
           </div>
-        </div>
+        )}
       </div>
     );
   }

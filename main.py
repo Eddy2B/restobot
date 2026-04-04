@@ -6082,6 +6082,32 @@ async def api_export_contacts(request: Request):
                     headers={"Content-Disposition": "attachment; filename=contacts_export.csv"})
 
 
+@app.get("/api/bookings/export")
+async def api_export_bookings(request: Request):
+    import csv, io
+    auth = get_auth(request)
+    if not auth:
+        return Response(status_code=401)
+    rid = auth["restaurant_id"]
+    date_from = request.query_params.get("from", "")
+    date_to = request.query_params.get("to", "9999")
+    rid_bookings = bookings.get(rid, [])
+    filtered = [b for b in rid_bookings if date_from <= (b.get("date") or "") <= date_to]
+    filtered.sort(key=lambda b: (b.get("date", ""), b.get("booking_time", "")))
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(["Date", "Heure", "Nom", "Telephone", "Couverts", "Table", "Zone", "Source", "Statut", "Occasion"])
+    for b in filtered:
+        writer.writerow([
+            b.get("date", ""), b.get("booking_time", b.get("time", "")),
+            b.get("name", ""), b.get("phone", ""),
+            b.get("covers", ""), b.get("table", ""), b.get("zone", ""),
+            b.get("source", ""), b.get("status", ""), b.get("occasion", ""),
+        ])
+    return Response(content=output.getvalue(), media_type="text/csv",
+                    headers={"Content-Disposition": "attachment; filename=reservations_export.csv"})
+
+
 @app.get("/api/contacts/search")
 async def api_search_contacts(request: Request):
     auth = get_auth(request)
@@ -6196,6 +6222,7 @@ async def api_get_config(request: Request):
         "special_info": ctx.get("special_info", ""),
         "booking_link": ctx.get("booking_link", ""),
         "allergens_policy": ctx.get("allergens_policy", ""),
+        "google_review_link": rest.get("google_review_link", ctx.get("google_review_link", "")),
         "tables": floor_tables.get(rid, []),
     }
 
@@ -6211,7 +6238,7 @@ async def api_update_config(request: Request):
     if not rest:
         return {"error": "No restaurant"}
     ctx = rest.setdefault("settings", {})
-    text_fields = ["description", "menu", "hours", "address", "phone", "tone", "languages", "special_info", "booking_link", "allergens_policy"]
+    text_fields = ["description", "menu", "hours", "address", "phone", "tone", "languages", "special_info", "booking_link", "allergens_policy", "google_review_link", "avg_ticket"]
     sanitize_dict(data, text_fields + ["name"], 2000)
     for field in text_fields:
         if field in data:
@@ -6402,19 +6429,56 @@ async def api_stats_history(request: Request):
         "pending_reviews": sum(1 for r in rq if not r.get("sent")),
         "cancelled": 0,
     }
-    history = list(daily_stats_history.get(rid, []))
-    for i in range(14, 0, -1):
-        d = (today_paris() - timedelta(days=i)).isoformat()
-        if not any(h["date"] == d for h in history):
-            day_bk = [b for b in rid_bookings if (b.get("date") or "").startswith(d)]
-            if day_bk:
-                src = {}
-                for b in day_bk:
-                    s = b.get("source", "autre")
-                    src[s] = src.get(s, 0) + 1
-                history.append({"date": d, "bookings": len(day_bk), "covers": sum(b.get("covers", 0) for b in day_bk), "messages": 0, "sources": src})
-    history.sort(key=lambda x: x["date"])
-    return {"history": history[-30:], "today": today_data}
+    date_from = request.query_params.get("from", (today_paris() - timedelta(days=30)).isoformat())
+    date_to = request.query_params.get("to", today_str)
+    # Build history from bookings
+    history = []
+    d = date.fromisoformat(date_from)
+    end_d = date.fromisoformat(date_to)
+    total_bk = 0
+    total_covers = 0
+    all_sources = {}
+    all_zones = {}
+    client_visits = {}
+    while d <= end_d:
+        ds = d.isoformat()
+        day_bk = [b for b in rid_bookings if (b.get("date") or "").startswith(ds)]
+        day_covers = sum(b.get("covers", 0) for b in day_bk)
+        src = {}
+        for b in day_bk:
+            s = b.get("source", "autre")
+            src[s] = src.get(s, 0) + 1
+            all_sources[s] = all_sources.get(s, 0) + 1
+            z = b.get("zone") or "salle"
+            all_zones[z] = all_zones.get(z, 0) + 1
+            cn = b.get("name", "")
+            if cn:
+                client_visits[cn] = client_visits.get(cn, 0) + 1
+        total_bk += len(day_bk)
+        total_covers += day_covers
+        if day_bk:
+            history.append({"date": ds, "bookings": len(day_bk), "covers": day_covers, "sources": src})
+        d += timedelta(days=1)
+    noshow_count = sum(1 for b in rid_bookings if b.get("status") == "noshow" and date_from <= (b.get("date") or "") <= date_to)
+    top_clients = sorted(client_visits.items(), key=lambda x: -x[1])[:10]
+    avg_ticket = float(restaurants_cache.get(rid, {}).get("settings", {}).get("avg_ticket", 25))
+    return {
+        "history": history[-90:],
+        "today": today_data,
+        "period": {
+            "from": date_from, "to": date_to,
+            "total_bookings": total_bk,
+            "total_covers": total_covers,
+            "avg_covers_per_day": round(total_covers / max(len(history), 1), 1),
+            "sources": all_sources,
+            "zones": all_zones,
+            "noshow_count": noshow_count,
+            "noshow_rate": round(noshow_count / max(total_bk, 1) * 100, 1),
+            "top_clients": [{"name": n, "visits": v} for n, v in top_clients],
+            "estimated_revenue": round(total_covers * avg_ticket),
+            "avg_ticket": avg_ticket,
+        }
+    }
 
 
 @app.post("/api/bookings/add")
