@@ -147,6 +147,8 @@ conversations = {}          # "restaurant_id:phone": [messages]
 bookings = {}               # restaurant_id: [bookings]
 floor_tables = {}           # restaurant_id: [{id, seats, zone, x, y, w, h, shape}]
 table_slots = {}            # restaurant_id: {"12:30": {"T1": "available"}}
+table_statuses = {}         # rid -> { "date:service:table_id": status }
+table_groups = {}           # rid -> [{"tables": ["T3","T4"], "name": "T3+T4"}]
 review_queue = {}           # restaurant_id: [reviews]
 contacts = {}               # restaurant_id: {phone: contact_data}
 restaurant_status = {}      # restaurant_id: {status, message, closed_dates, full_dates, temp_message, ...}
@@ -5942,6 +5944,8 @@ async def api_get_floorplan(request: Request):
         "slots": table_slots.get(rid, {}),
         "bookings": bookings.get(rid, [])[-100:],
         "slot_summary": get_slot_summary(rid),
+        "statuses": table_statuses.get(rid, {}),
+        "groups": table_groups.get(rid, []),
     }
 
 
@@ -5985,6 +5989,56 @@ async def api_release_table(request: Request):
             break
     bump_version(rid)
     return {"status": "released"}
+
+
+@app.post("/api/floorplan/status")
+async def api_table_status(request: Request):
+    auth = get_auth(request)
+    if not auth:
+        return Response(status_code=401)
+    rid = auth["restaurant_id"]
+    data = await request.json()
+    table_id = data.get("table_id", "")
+    status = data.get("status", "available")
+    date = data.get("date", "")
+    service = data.get("service", "soir")
+    if status not in ("available", "reserved", "seated", "dessert", "done", "noshow"):
+        return {"error": "Invalid status"}
+    key = f"{date}:{service}:{table_id}"
+    table_statuses.setdefault(rid, {})[key] = status
+    bump_version(rid)
+    return {"status": "ok"}
+
+
+@app.post("/api/floorplan/group")
+async def api_table_group(request: Request):
+    auth = get_auth(request)
+    if not auth:
+        return Response(status_code=401)
+    rid = auth["restaurant_id"]
+    data = await request.json()
+    tables = data.get("tables", [])
+    name = data.get("name", "+".join(tables))
+    if len(tables) < 2:
+        return {"error": "Need at least 2 tables"}
+    groups = table_groups.setdefault(rid, [])
+    groups.append({"tables": tables, "name": name})
+    bump_version(rid)
+    return {"status": "ok", "groups": groups}
+
+
+@app.post("/api/floorplan/ungroup")
+async def api_table_ungroup(request: Request):
+    auth = get_auth(request)
+    if not auth:
+        return Response(status_code=401)
+    rid = auth["restaurant_id"]
+    data = await request.json()
+    name = data.get("name", "")
+    groups = table_groups.get(rid, [])
+    table_groups[rid] = [g for g in groups if g.get("name") != name]
+    bump_version(rid)
+    return {"status": "ok", "groups": table_groups[rid]}
 
 
 @app.get("/api/reviews")

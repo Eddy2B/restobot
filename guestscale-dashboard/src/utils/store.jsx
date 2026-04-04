@@ -11,6 +11,7 @@ const initialState = {
   conversations: {},
   floorplan: [],
   floorSlots: {},
+  floorStatuses: {},
   reviewQueue: [],
   waitlistEntries: [],
   menuSections: [],
@@ -73,6 +74,7 @@ export function StoreProvider({ children }) {
           conversations,
           floorplan: res[3]?.tables || [],
           floorSlots: res[3]?.slots || {},
+          floorStatuses: res[3]?.statuses || {},
           reviewQueue: res[4]?.queue || [],
           restaurantConfig: res[5] || {},
           dailyMsg: res[6]?.message || '',
@@ -117,7 +119,7 @@ export function StoreProvider({ children }) {
         (res[2].conversations || []).forEach(cv => { conversations[cv.phone || cv.id] = cv; });
         payload.conversations = conversations;
       }
-      if (res[3]) { payload.floorplan = res[3].tables || []; payload.floorSlots = res[3].slots || {}; }
+      if (res[3]) { payload.floorplan = res[3].tables || []; payload.floorSlots = res[3].slots || {}; payload.floorStatuses = res[3].statuses || {}; }
       if (res[4]) payload.reviewQueue = res[4].queue || [];
       if (res[5]) payload.dailyMsg = res[5].message || '';
       if (res[6]) payload.menuSections = res[6].sections || [];

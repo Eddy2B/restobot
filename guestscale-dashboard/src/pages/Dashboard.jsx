@@ -115,6 +115,12 @@ export default function Dashboard() {
   const [contactTagFilter, setContactTagFilter] = useState('');
   const [contactSort, setContactSort] = useState('name');
 
+  // Floorplan extras
+  const [fpSearch, setFpSearch] = useState('');
+  const [fpStatusMenu, setFpStatusMenu] = useState(null);
+  const [fpDragResa, setFpDragResa] = useState(null);
+  const [fpDragOver, setFpDragOver] = useState(null);
+
   // Waitlist form
   const [wlName, setWlName] = useState('');
   const [wlPhone, setWlPhone] = useState('');
@@ -539,6 +545,33 @@ export default function Dashboard() {
       .catch(() => showToast('Erreur'));
   }
 
+  // ---- Floorplan status & drag-assign ----
+  async function setTableStatus(tableId, status) {
+    try {
+      await apiFetch('/api/floorplan/status', {
+        method: 'POST',
+        body: JSON.stringify({ table_id: tableId, status, date: selDate, service: fpService })
+      });
+      setFpStatusMenu(null);
+      await fetchData();
+    } catch { showToast('Erreur'); }
+  }
+
+  async function assignTableDrop(bookingId, tableId) {
+    const bk = state.bookings.find(b => b.id === bookingId);
+    if (!bk) return;
+    try {
+      await apiFetch('/api/floorplan/assign', {
+        method: 'POST',
+        body: JSON.stringify({ booking_id: bookingId, table_id: tableId, slot_time: bk.booking_time || bk.time || '' })
+      });
+      setFpDragResa(null);
+      setFpDragOver(null);
+      await fetchData();
+      showToast('Table assignee');
+    } catch { showToast('Erreur'); }
+  }
+
   // ---- Contacts ----
   async function saveContactNote(phone) {
     try {
@@ -827,18 +860,40 @@ export default function Dashboard() {
 
   function renderFloorplan() {
     const tables = state.floorplan;
+    const statuses = state.floorStatuses || {};
     const midiBks = bookingsForDate.filter(b => {
       const t = b.booking_time || b.time || '';
       const h = parseInt(t.split(':')[0]);
       return fpService === 'midi' ? (h >= 11 && h < 15) : (h >= 18 || h < 4);
     });
 
+    const STATUS_COLORS = {
+      available: { border: '#10B981', bg: 'rgba(16,185,129,.08)', label: 'Libre', icon: '' },
+      reserved: { border: '#2D7DD2', bg: 'rgba(45,125,210,.12)', label: 'Reserve', icon: '\u{1F550}' },
+      seated: { border: '#F59E0B', bg: 'rgba(245,158,11,.12)', label: 'A table', icon: '\u{1F37D}' },
+      dessert: { border: '#EAB308', bg: 'rgba(234,179,8,.1)', label: 'Dessert', icon: '\u{1F370}' },
+      done: { border: '#6B7280', bg: 'rgba(107,114,128,.1)', label: 'Termine', icon: '\u2713' },
+      noshow: { border: '#EF4444', bg: 'rgba(239,68,68,.12)', label: 'No-show', icon: '\u2717' },
+    };
+
     const midiSlots = ['12:00','12:15','12:30','12:45','13:00','13:15','13:30','13:45','14:00','14:15','14:30'];
     const soirSlots = ['19:00','19:15','19:30','19:45','20:00','20:15','20:30','20:45','21:00','21:15','21:30','21:45','22:00','22:15','22:30'];
     const slots = fpService === 'midi' ? midiSlots : soirSlots;
 
+    const searchLower = fpSearch.trim().toLowerCase();
+
+    function tableMatchesSearch(t, booked) {
+      if (!searchLower) return true;
+      if (t.id.toLowerCase().includes(searchLower)) return true;
+      if (booked) {
+        if ((booked.name || '').toLowerCase().includes(searchLower)) return true;
+        if ((booked.phone || '').includes(searchLower)) return true;
+      }
+      return false;
+    }
+
     return (
-      <div>
+      <div onClick={() => { if (fpStatusMenu) setFpStatusMenu(null); }}>
         <div style={{ display: 'flex', gap: 8, marginBottom: 14, alignItems: 'center', flexWrap: 'wrap' }}>
           <button className={'ba' + (fpMode === 'resa' ? '' : '')}
             style={{ background: fpMode === 'resa' ? 'var(--acg)' : 'var(--bg)', color: fpMode === 'resa' ? '#fff' : 'var(--ts)', border: '1px solid var(--b)' }}
@@ -854,6 +909,11 @@ export default function Dashboard() {
             style={{ background: fpService === 'soir' ? 'var(--ac)' : 'var(--bg)', color: fpService === 'soir' ? '#fff' : 'var(--ts)', border: '1px solid var(--b)' }}
             onClick={() => setFpService('soir')}>Soir</button>
         </div>
+
+        {fpMode === 'resa' && (
+          <input className="finp" style={{ marginBottom: 10 }} placeholder="\uD83D\uDD0D Rechercher un client ou une table..."
+            value={fpSearch} onChange={e => setFpSearch(e.target.value)} />
+        )}
 
         {fpMode === 'resa' && (
           <div style={{ display: 'flex', gap: 6, marginBottom: 14, flexWrap: 'wrap' }}>
@@ -876,6 +936,18 @@ export default function Dashboard() {
                 const isSelected = fpMode === 'edit' ? fpEditTable?.id === t.id : fpSelectedTable === t.id;
                 const w = 50 + (t.seats || 4) * 5;
                 const h = 50 + (t.seats || 4) * 4;
+
+                const statusKey = `${selDate}:${fpService}:${t.id}`;
+                const explicitStatus = statuses[statusKey];
+                const tableStatus = explicitStatus || (booked ? 'reserved' : 'available');
+                const sc = STATUS_COLORS[tableStatus] || STATUS_COLORS.available;
+
+                const matches = tableMatchesSearch(t, booked);
+                const isDragOver = fpDragOver === t.id;
+
+                const contact = booked && booked.phone ? state.contacts[booked.phone] : null;
+                const hasWarning = contact && (contact.preferences || contact.allergies);
+
                 return (
                   <div key={t.id} className="ftbl" style={{
                     left: (t.x || 20) + '%',
@@ -883,24 +955,37 @@ export default function Dashboard() {
                     width: w,
                     height: h,
                     borderRadius: t.shape === 'round' ? '50%' : 8,
-                    borderColor: isSelected ? '#2D7DD2' : booked ? '#4ECDC4' : zoneColor(t.zone),
+                    borderColor: isDragOver ? '#2DD4BF' : isSelected ? '#2D7DD2' : sc.border,
                     borderWidth: isSelected ? 3 : 2,
-                    background: booked ? 'rgba(78,205,196,.12)' : isSelected ? 'rgba(45,125,210,.1)' : 'rgba(255,255,255,.6)',
+                    borderStyle: isDragOver ? 'dashed' : 'solid',
+                    background: isSelected ? 'rgba(45,125,210,.1)' : sc.bg,
                     color: 'var(--t)',
                     cursor: fpMode === 'edit' ? 'grab' : 'pointer',
                     transform: 'translate(-50%, -50%)',
-                    zIndex: isSelected ? 10 : 1,
-                    boxShadow: isSelected ? '0 0 0 3px rgba(45,125,210,.2)' : 'none',
+                    zIndex: isSelected || fpStatusMenu === t.id ? 10 : 1,
+                    boxShadow: isSelected ? '0 0 0 3px rgba(45,125,210,.2)' : (searchLower && matches ? '0 0 0 2px ' + sc.border : 'none'),
                     transition: fpDrag?.id === t.id ? 'none' : 'all .15s',
+                    opacity: searchLower && !matches ? 0.2 : 1,
+                    animation: searchLower && matches ? 'fpPulse 1.5s infinite' : 'none',
                   }}
                     onMouseDown={fpMode === 'edit' ? (e) => handleFpMouseDown(e, t) : undefined}
-                    onClick={() => {
+                    onDragOver={fpMode === 'resa' ? (e) => { e.preventDefault(); setFpDragOver(t.id); } : undefined}
+                    onDragLeave={fpMode === 'resa' ? () => setFpDragOver(null) : undefined}
+                    onDrop={fpMode === 'resa' ? () => { if (fpDragResa) assignTableDrop(fpDragResa, t.id); } : undefined}
+                    onClick={(e) => {
                       if (fpMode === 'edit') {
                         setFpEditTable(t);
                       } else {
+                        // Mobile tap-to-assign
+                        if (fpDragResa) {
+                          e.stopPropagation();
+                          assignTableDrop(fpDragResa, t.id);
+                          return;
+                        }
                         setFpSelectedTable(t.id);
                         if (booked) {
-                          openEditResa(booked);
+                          e.stopPropagation();
+                          setFpStatusMenu(fpStatusMenu === t.id ? null : t.id);
                         } else {
                           setNrFirst(''); setNrLast(''); setNrCovers('2');
                           setNrTime(fpService === 'midi' ? '12:30' : '19:30');
@@ -911,8 +996,39 @@ export default function Dashboard() {
                     }}
                   >
                     <span style={{ fontWeight: 700, fontSize: 11 }}>{t.id}</span>
-                    <span style={{ fontSize: 8, color: 'var(--tm)' }}>{t.seats}p</span>
-                    {booked && <span style={{ fontSize: 7, color: '#4ECDC4', fontWeight: 700, marginTop: 1 }}>{booked.name?.split(' ')[0]}</span>}
+                    <span style={{ fontSize: 8, color: 'var(--tm)' }}>{t.seats}p {sc.icon}</span>
+                    {booked && (
+                      <span style={{ fontSize: 7, color: sc.border, fontWeight: 700, marginTop: 1, textAlign: 'center', lineHeight: '1.2' }}>
+                        {booked.name?.split(' ')[0]} {timeStr(booked.booking_time || booked.time)} {booked.covers}p
+                        {hasWarning ? ' \u26A0\uFE0F' : ''}
+                      </span>
+                    )}
+
+                    {fpStatusMenu === t.id && (
+                      <div onClick={e => e.stopPropagation()} style={{
+                        position: 'absolute', top: '100%', left: '50%', transform: 'translateX(-50%)',
+                        background: 'var(--bg)', border: '1px solid var(--bl)', borderRadius: 10,
+                        padding: 8, zIndex: 100, minWidth: 140, boxShadow: '0 4px 16px rgba(0,0,0,.15)',
+                        display: 'flex', flexDirection: 'column', gap: 4,
+                      }}>
+                        {Object.entries(STATUS_COLORS).map(([k, v]) => (
+                          <button key={k} className="ba" style={{
+                            fontSize: 10, padding: '4px 8px', textAlign: 'left',
+                            background: tableStatus === k ? v.bg : 'transparent',
+                            borderColor: v.border, color: 'var(--t)',
+                            border: '1px solid ' + (tableStatus === k ? v.border : 'var(--bl)'),
+                            borderRadius: 6, fontWeight: tableStatus === k ? 700 : 400,
+                          }} onClick={() => setTableStatus(t.id, k)}>
+                            {v.icon} {v.label}
+                          </button>
+                        ))}
+                        <hr style={{ border: 'none', borderTop: '1px solid var(--bl)', margin: '4px 0' }} />
+                        <button className="ba" style={{ fontSize: 10, padding: '4px 8px', background: 'var(--ac)', color: '#fff', border: 'none', borderRadius: 6 }}
+                          onClick={() => { setFpStatusMenu(null); openEditResa(booked); }}>
+                          Modifier resa
+                        </button>
+                      </div>
+                    )}
                   </div>
                 );
               })}
@@ -922,6 +1038,42 @@ export default function Dashboard() {
                 </div>
               )}
             </div>
+
+            <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginTop: 10, fontSize: 10, color: 'var(--tm)' }}>
+              {Object.entries(STATUS_COLORS).map(([k, v]) => (
+                <div key={k} style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                  <div style={{ width: 10, height: 10, borderRadius: 3, background: v.border }} />
+                  {v.label}
+                </div>
+              ))}
+            </div>
+
+            {fpMode === 'resa' && (() => {
+              const unassigned = midiBks.filter(b => !b.table);
+              if (!unassigned.length) return null;
+              return (
+                <div style={{ marginTop: 14 }}>
+                  <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--tm)', marginBottom: 6 }}>Reservations sans table</div>
+                  <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                    {unassigned.map(b => (
+                      <div key={b.id} draggable
+                        onDragStart={() => setFpDragResa(b.id)}
+                        onDragEnd={() => { setFpDragResa(null); setFpDragOver(null); }}
+                        onClick={() => {
+                          if (fpDragResa === b.id) { setFpDragResa(null); }
+                          else { setFpDragResa(b.id); }
+                        }}
+                        style={{ padding: '6px 10px', borderRadius: 8,
+                          background: fpDragResa === b.id ? 'var(--ac)' : 'var(--al)',
+                          color: fpDragResa === b.id ? '#fff' : 'var(--ac)',
+                          fontSize: 11, fontWeight: 600, cursor: 'grab', border: '1px dashed var(--ac)' }}>
+                        {b.name?.split(' ')[0]} {b.booking_time || b.time} {b.covers}p
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              );
+            })()}
 
             {fpMode === 'edit' && (
               <div style={{ marginTop: 14, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
@@ -1037,6 +1189,13 @@ export default function Dashboard() {
             );
           })()}
         </div>
+
+        <style>{`
+          @keyframes fpPulse {
+            0%, 100% { box-shadow: 0 0 0 2px rgba(45,125,210,.3); }
+            50% { box-shadow: 0 0 0 5px rgba(45,125,210,.15); }
+          }
+        `}</style>
       </div>
     );
   }
