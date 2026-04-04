@@ -152,6 +152,9 @@ export default function Dashboard() {
 
   // Bookings view
   const [bkView, setBkView] = useState('day');
+  const [bkSearch, setBkSearch] = useState('');
+  const [nrSuggestions, setNrSuggestions] = useState([]);
+  const [nrContactMatch, setNrContactMatch] = useState(null);
 
   // Inactivity timer
   const lastActivity = useRef(Date.now());
@@ -309,7 +312,29 @@ export default function Dashboard() {
   function openNewResa() {
     setNrFirst(''); setNrLast(''); setNrCovers('2'); setNrTime('19:30');
     setNrPhone(''); setNrEmail(''); setNrSource('phone'); setNrDate(selDate);
+    setNrSuggestions([]);
+    setNrContactMatch(null);
     setNewResaOpen(true);
+  }
+
+  async function searchContacts(query) {
+    if (query.length < 2) { setNrSuggestions([]); setNrContactMatch(null); return; }
+    try {
+        const r = await apiFetch('/api/contacts/search?q=' + encodeURIComponent(query));
+        const d = await r.json();
+        setNrSuggestions(d.results || []);
+        setNrContactMatch(d.results?.length > 0 ? d.results[0] : null);
+    } catch { setNrSuggestions([]); }
+  }
+
+  function selectContactSuggestion(ct) {
+    const parts = (ct.name || '').split(' ');
+    setNrFirst(parts[0] || '');
+    setNrLast(parts.slice(1).join(' ') || '');
+    setNrPhone(ct.phone || '');
+    setNrEmail(ct.email || '');
+    setNrSuggestions([]);
+    setNrContactMatch(ct);
   }
 
   async function submitNewResa() {
@@ -1203,65 +1228,160 @@ export default function Dashboard() {
   }
 
   function renderBookings() {
+    const selD = parseDateLocal(selDate);
+    const dateTitle = bkView === 'day'
+        ? selD.toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })
+        : bkView === 'week' ? (() => {
+            const dow = selD.getDay();
+            const mon = new Date(selD); mon.setDate(mon.getDate() - ((dow + 6) % 7));
+            const sun = new Date(mon); sun.setDate(sun.getDate() + 6);
+            return mon.getDate() + ' ' + MONTH_NAMES[mon.getMonth()].slice(0,3) + ' — ' + sun.getDate() + ' ' + MONTH_NAMES[sun.getMonth()].slice(0,3) + ' ' + sun.getFullYear();
+        })()
+        : MONTH_NAMES[selD.getMonth()] + ' ' + selD.getFullYear();
+
+    function navDate(dir) {
+        const d = parseDateLocal(selDate);
+        if (bkView === 'day') d.setDate(d.getDate() + dir);
+        else if (bkView === 'week') d.setDate(d.getDate() + dir * 7);
+        else d.setMonth(d.getMonth() + dir);
+        dispatch({ type: 'SET_DATE', payload: fmtDate(d) });
+    }
+
     return (
       <div>
-        <div style={{ display: 'flex', gap: 8, marginBottom: 14, alignItems: 'center' }}>
-          <button className="ba"
-            style={{ background: bkView === 'day' ? 'var(--acg)' : 'var(--bg)', color: bkView === 'day' ? '#fff' : 'var(--ts)', border: '1px solid var(--b)' }}
-            onClick={() => setBkView('day')}>Jour</button>
-          <button className="ba"
-            style={{ background: bkView === 'week' ? 'var(--acg)' : 'var(--bg)', color: bkView === 'week' ? '#fff' : 'var(--ts)', border: '1px solid var(--b)' }}
-            onClick={() => setBkView('week')}>Semaine</button>
-          <div style={{ flex: 1 }} />
-          <button className="ba" onClick={openNewResa}>+ Nouvelle reservation</button>
+        {/* View toggles + new resa button */}
+        <div style={{ display: 'flex', gap: 8, marginBottom: 14, alignItems: 'center', flexWrap: 'wrap' }}>
+            {['day', 'week', 'month'].map(v => (
+                <button key={v} className="ba"
+                    style={{ background: bkView === v ? 'var(--acg)' : 'var(--bg)', color: bkView === v ? '#fff' : 'var(--ts)', border: '1px solid var(--b)' }}
+                    onClick={() => setBkView(v)}>
+                    {v === 'day' ? 'Jour' : v === 'week' ? 'Semaine' : 'Mois'}
+                </button>
+            ))}
+            <div style={{ flex: 1 }} />
+            <button className="ba" onClick={openNewResa}>+ Nouvelle</button>
         </div>
 
-        {bkView === 'day' && (
-          <div className="fp-layout">
-            <div className="fp-main">
-              <div className="card">
-                <div className="card-h">
-                  <div>
-                    <div className="card-t">Reservations du {selDate}</div>
-                    <div className="card-s">{bookingsForDate.length} reservations</div>
-                  </div>
-                </div>
-                {bookingsForDate.map(bk => (
-                  <div key={bk.id} className="rw" style={{ cursor: 'pointer' }} onClick={() => openEditResa(bk)}>
-                    <div className="rl">
-                      <div className="dot" style={{ background: SRC_COLORS[bk.source] || '#6B7280' }} />
-                      <div>
-                        <div style={{ fontSize: 13, fontWeight: 600 }}>{bk.name}{occasionBadge(bk.occasion)}</div>
-                        <div style={{ fontSize: 11, color: 'var(--tm)' }}>
-                          {timeStr(bk.booking_time || bk.time)} &middot; {bk.covers} couverts
-                          {bk.table ? ' · Table ' + bk.table : ''}
-                          {bk.zone ? ' · ' + bk.zone : ''}
-                        </div>
-                      </div>
-                    </div>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                      <span className="src-badge" style={{
-                        background: (SRC_COLORS[bk.source] || '#6B7280') + '18',
-                        color: SRC_COLORS[bk.source] || '#6B7280'
-                      }}>{SRC_LABELS[bk.source] || bk.source}</span>
-                    </div>
-                  </div>
-                ))}
-                {bookingsForDate.length === 0 && (
-                  <div style={{ padding: 40, textAlign: 'center', color: 'var(--tm)', fontSize: 13 }}>
-                    Aucune reservation pour le {selDate}
-                  </div>
-                )}
+        {/* Navigation arrows + title */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14 }}>
+            <button className="ba" style={{ padding: '6px 10px', background: 'var(--bg)', color: 'var(--ts)', border: '1px solid var(--b)' }}
+                onClick={() => navDate(-1)}>&#8249;</button>
+            <div style={{ fontSize: 15, fontWeight: 700, flex: 1, textAlign: 'center', textTransform: 'capitalize' }}>{dateTitle}</div>
+            <button className="ba" style={{ padding: '6px 10px', background: 'var(--bg)', color: 'var(--ts)', border: '1px solid var(--b)' }}
+                onClick={() => navDate(1)}>&#8250;</button>
+            <button className="ba" style={{ fontSize: 11, padding: '6px 12px', background: 'var(--bg)', color: 'var(--ts)', border: '1px solid var(--b)' }}
+                onClick={() => dispatch({ type: 'SET_DATE', payload: fmtDate(new Date()) })}>Aujourd&apos;hui</button>
+        </div>
+
+        {/* Search bar */}
+        <input className="finp" style={{ marginBottom: 14 }}
+            placeholder="🔍 Rechercher une reservation (nom, telephone, email...)"
+            value={bkSearch} onChange={e => setBkSearch(e.target.value)} />
+
+        {/* Conditional views */}
+        {bkSearch.length >= 2 ? renderBookingSearch() : (
+            <>
+                {bkView === 'day' && renderDayView()}
+                {bkView === 'week' && renderWeekView()}
+                {bkView === 'month' && renderMonthView()}
+            </>
+        )}
+      </div>
+    );
+  }
+
+  function renderDayView() {
+    return (
+      <div className="fp-layout">
+        <div className="fp-main">
+          <div className="card">
+            <div className="card-h">
+              <div>
+                <div className="card-t">Reservations du {selDate}</div>
+                <div className="card-s">{bookingsForDate.length} reservations</div>
               </div>
             </div>
-            <div className="fp-sidebar">
-              <Calendar />
-            </div>
+            {bookingsForDate.map(bk => (
+              <div key={bk.id} className="rw" style={{ cursor: 'pointer' }} onClick={() => openEditResa(bk)}>
+                <div className="rl">
+                  <div className="dot" style={{ background: SRC_COLORS[bk.source] || '#6B7280' }} />
+                  <div>
+                    <div style={{ fontSize: 13, fontWeight: 600 }}>{bk.name}{occasionBadge(bk.occasion)}</div>
+                    <div style={{ fontSize: 11, color: 'var(--tm)' }}>
+                      {timeStr(bk.booking_time || bk.time)} &middot; {bk.covers} couverts
+                      {bk.table ? ' · Table ' + bk.table : ''}
+                      {bk.zone ? ' · ' + bk.zone : ''}
+                    </div>
+                  </div>
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <span className="src-badge" style={{
+                    background: (SRC_COLORS[bk.source] || '#6B7280') + '18',
+                    color: SRC_COLORS[bk.source] || '#6B7280'
+                  }}>{SRC_LABELS[bk.source] || bk.source}</span>
+                </div>
+              </div>
+            ))}
+            {bookingsForDate.length === 0 && (
+              <div style={{ padding: 40, textAlign: 'center', color: 'var(--tm)', fontSize: 13 }}>
+                Aucune reservation pour le {selDate}
+              </div>
+            )}
           </div>
-        )}
-
-        {bkView === 'week' && renderWeekView()}
+        </div>
+        <div className="fp-sidebar">
+          <Calendar />
+        </div>
       </div>
+    );
+  }
+
+  function renderBookingSearch() {
+    const q = bkSearch.toLowerCase();
+    const results = state.bookings.filter(b =>
+        (b.name || '').toLowerCase().includes(q) ||
+        (b.phone || '').includes(q) ||
+        (b.email || '').toLowerCase().includes(q)
+    );
+    const byDate = {};
+    results.forEach(b => {
+        const d = b.date || 'Sans date';
+        if (!byDate[d]) byDate[d] = [];
+        byDate[d].push(b);
+    });
+    const sortedDates = Object.keys(byDate).sort().reverse();
+
+    return (
+        <div className="card">
+            <div className="card-h">
+                <div className="card-t">Resultats pour &ldquo;{bkSearch}&rdquo;</div>
+                <div className="card-s">{results.length} reservation{results.length !== 1 ? 's' : ''}</div>
+            </div>
+            {sortedDates.map(d => (
+                <div key={d}>
+                    <div style={{ padding: '8px 18px', fontSize: 11, fontWeight: 700, color: 'var(--ac)', background: 'var(--bl)', borderBottom: '1px solid var(--b)' }}>{d}</div>
+                    {byDate[d].map(bk => (
+                        <div key={bk.id} className="rw" style={{ cursor: 'pointer' }} onClick={() => openEditResa(bk)}>
+                            <div className="rl">
+                                <div className="dot" style={{ background: SRC_COLORS[bk.source] || '#6B7280' }} />
+                                <div>
+                                    <div style={{ fontSize: 13, fontWeight: 600 }}>{bk.name}{occasionBadge(bk.occasion)}</div>
+                                    <div style={{ fontSize: 11, color: 'var(--tm)' }}>
+                                        {timeStr(bk.booking_time || bk.time)} · {bk.covers} couverts
+                                        {bk.table ? ' · ' + bk.table : ''}
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    ))}
+                </div>
+            ))}
+            {results.length === 0 && (
+                <div style={{ padding: 40, textAlign: 'center', color: 'var(--tm)', fontSize: 13 }}>
+                    Aucune reservation trouvee pour &ldquo;{bkSearch}&rdquo;
+                </div>
+            )}
+        </div>
     );
   }
 
@@ -1333,6 +1453,53 @@ export default function Dashboard() {
           })}
         </div>
       </div>
+    );
+  }
+
+  function renderMonthView() {
+    const selD = parseDateLocal(selDate);
+    const year = selD.getFullYear();
+    const month = selD.getMonth();
+    const firstDay = new Date(year, month, 1).getDay();
+    const startIdx = (firstDay + 6) % 7;
+    const daysInMonth = new Date(year, month + 1, 0).getDate();
+    const today = fmtDate(new Date());
+    const DOW = ['L','M','M','J','V','S','D'];
+
+    return (
+        <div className="card" style={{ padding: 16 }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: 2 }}>
+                {DOW.map((d, i) => (
+                    <div key={i} style={{ textAlign: 'center', fontSize: 10, fontWeight: 700, color: 'var(--tm)', padding: 4 }}>{d}</div>
+                ))}
+                {Array.from({ length: startIdx }).map((_, i) => <div key={'e' + i} />)}
+                {Array.from({ length: daysInMonth }, (_, i) => {
+                    const day = i + 1;
+                    const ds = fmtDate(new Date(year, month, day));
+                    const dayBks = state.bookings.filter(b => (b.date || '').startsWith(ds));
+                    const covers = dayBks.reduce((s, b) => s + (b.covers || 0), 0);
+                    const isToday = ds === today;
+                    const isSel = ds === selDate;
+                    return (
+                        <div key={day} onClick={() => { dispatch({ type: 'SET_DATE', payload: ds }); setBkView('day'); }}
+                            style={{
+                                padding: 8, borderRadius: 8, cursor: 'pointer', textAlign: 'center',
+                                background: isSel ? 'var(--ac)' : isToday ? 'var(--al)' : dayBks.length ? 'var(--bl)' : 'transparent',
+                                color: isSel ? '#fff' : 'var(--t)',
+                                border: isToday && !isSel ? '1px solid var(--b)' : '1px solid transparent',
+                                transition: 'all .1s',
+                            }}>
+                            <div style={{ fontSize: 13, fontWeight: 700 }}>{day}</div>
+                            {dayBks.length > 0 && (
+                                <div style={{ fontSize: 9, color: isSel ? 'rgba(255,255,255,.8)' : 'var(--ac)', fontWeight: 700, marginTop: 2 }}>
+                                    {dayBks.length} resa{dayBks.length > 1 ? 's' : ''} · {covers}p
+                                </div>
+                            )}
+                        </div>
+                    );
+                })}
+            </div>
+        </div>
     );
   }
 
@@ -2371,8 +2538,33 @@ export default function Dashboard() {
           <div className="finp-row">
             <div className="finp-group">
               <div className="finp-label">Prenom</div>
-              <input className="finp" value={nrFirst} onChange={e => setNrFirst(e.target.value)} />
+              <input className="finp" value={nrFirst} onChange={e => { setNrFirst(e.target.value); searchContacts(e.target.value); }} />
             </div>
+            {nrSuggestions.length > 0 && (
+                <div style={{ position: 'relative' }}>
+                    <div style={{ position: 'absolute', top: 0, left: 0, right: 0, background: 'var(--card)', border: '1px solid var(--b)',
+                        borderRadius: 8, boxShadow: '0 4px 12px rgba(0,0,0,.1)', zIndex: 10, maxHeight: 200, overflowY: 'auto' }}>
+                        {nrSuggestions.map(ct => (
+                            <div key={ct.phone} style={{ padding: '10px 14px', cursor: 'pointer', borderBottom: '1px solid var(--bl)',
+                                fontSize: 13, transition: 'background .1s' }}
+                                onMouseOver={e => e.currentTarget.style.background = 'var(--bl)'}
+                                onMouseOut={e => e.currentTarget.style.background = ''}
+                                onClick={() => selectContactSuggestion(ct)}>
+                                <div style={{ fontWeight: 600 }}>{ct.name}</div>
+                                <div style={{ fontSize: 11, color: 'var(--tm)' }}>{ct.phone} · {ct.visits || 0} visites</div>
+                            </div>
+                        ))}
+                    </div>
+                </div>
+            )}
+            {nrFirst.length >= 2 && nrSuggestions.length === 0 && nrContactMatch === null && (
+                <div style={{ fontSize: 11, color: 'var(--tm)', marginTop: 2, marginBottom: 4 }}>Nouveau client</div>
+            )}
+            {nrContactMatch && (
+                <div style={{ fontSize: 11, color: 'var(--ok)', marginTop: 2, marginBottom: 4 }}>
+                    &#10003; Client connu — {nrContactMatch.visits || 0} visites
+                </div>
+            )}
             <div className="finp-group">
               <div className="finp-label">Nom</div>
               <input className="finp" value={nrLast} onChange={e => setNrLast(e.target.value)} />
@@ -2460,6 +2652,20 @@ export default function Dashboard() {
             background: '#FEF2F2', color: '#EF4444', borderRadius: 8, fontSize: 13,
             fontWeight: 600, cursor: 'pointer', fontFamily: 'var(--f)',
           }} onClick={deleteResa}>Supprimer cette reservation</button>
+          {editResaData?.phone && (
+              <button style={{
+                  marginTop: 8, width: '100%', padding: 10, border: '1px solid var(--b)',
+                  background: 'var(--bg)', color: 'var(--ac)', borderRadius: 8, fontSize: 13,
+                  fontWeight: 600, cursor: 'pointer', fontFamily: 'var(--f)',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+              }} onClick={() => {
+                  setEditResaOpen(false);
+                  openContact(editResaData.phone);
+                  setPage('contacts');
+              }}>
+                  &#128100; Fiche contact &rarr;
+              </button>
+          )}
         </div>
       </div>
     );

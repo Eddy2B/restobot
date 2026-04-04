@@ -6082,6 +6082,27 @@ async def api_export_contacts(request: Request):
                     headers={"Content-Disposition": "attachment; filename=contacts_export.csv"})
 
 
+@app.get("/api/contacts/search")
+async def api_search_contacts(request: Request):
+    auth = get_auth(request)
+    if not auth:
+        return Response(status_code=401)
+    rid = auth["restaurant_id"]
+    q = (request.query_params.get("q") or "").strip().lower()
+    if len(q) < 2:
+        return {"results": []}
+    rid_contacts = contacts.get(rid, {})
+    results = []
+    for phone, ct in rid_contacts.items():
+        name = (ct.get("name") or "").lower()
+        email = (ct.get("email") or "").lower()
+        if q in name or q in email or q in phone:
+            results.append(ct)
+        if len(results) >= 5:
+            break
+    return {"results": results}
+
+
 @app.get("/api/contacts")
 async def api_get_contacts(request: Request):
     auth = get_auth(request)
