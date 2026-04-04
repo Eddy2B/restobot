@@ -152,6 +152,24 @@ export default function Dashboard() {
   const [obDesc, setObDesc] = useState('');
   const [obTone, setObTone] = useState('');
 
+  // Campaigns
+  const [campaignList, setCampaignList] = useState([]);
+  const [campaignMode, setCampaignMode] = useState('list'); // list, create
+  const [campSubject, setCampSubject] = useState('');
+  const [campBody, setCampBody] = useState('');
+  const [campFilterTags, setCampFilterTags] = useState([]);
+  const [campNotSeen, setCampNotSeen] = useState('');
+  const [campPreviewCount, setCampPreviewCount] = useState(null);
+
+  // Floor plan wizard
+  const [wizardOpen, setWizardOpen] = useState(false);
+  const [wizStep, setWizStep] = useState(0);
+  const [wizCapacity, setWizCapacity] = useState('40');
+  const [wizZones, setWizZones] = useState(['Salle']);
+  const [wizTables, setWizTables] = useState([]);
+  const [wizGroups, setWizGroups] = useState([]);
+  const [wizServices, setWizServices] = useState({ midi: { from: '12:00', to: '14:30' }, soir: { from: '19:00', to: '22:30' } });
+
   // Bookings view
   const [bkView, setBkView] = useState('day');
   const [bkSearch, setBkSearch] = useState('');
@@ -572,6 +590,53 @@ export default function Dashboard() {
       .catch(() => showToast('Erreur'));
   }
 
+  // ---- Campaigns ----
+  async function loadCampaigns() {
+    try {
+      const r = await apiFetch('/api/campaigns');
+      const d = await r.json();
+      setCampaignList(d.campaigns || []);
+    } catch {}
+  }
+
+  async function previewCampaign() {
+    try {
+      const filters = {};
+      if (campFilterTags.length) filters.tags = campFilterTags;
+      if (campNotSeen) filters.not_seen_days = parseInt(campNotSeen);
+      const r = await apiFetch('/api/campaigns/preview', { method: 'POST', body: JSON.stringify({ filters }) });
+      const d = await r.json();
+      setCampPreviewCount(d.count);
+    } catch {}
+  }
+
+  async function sendCampaign() {
+    if (!campSubject || !campBody) { showToast('Sujet et message requis'); return; }
+    const filters = {};
+    if (campFilterTags.length) filters.tags = campFilterTags;
+    if (campNotSeen) filters.not_seen_days = parseInt(campNotSeen);
+    if (!window.confirm('Envoyer a ' + (campPreviewCount || '?') + ' contacts ?')) return;
+    try {
+      const r = await apiFetch('/api/campaigns/send', { method: 'POST', body: JSON.stringify({ subject: campSubject, body: campBody, filters }) });
+      const d = await r.json();
+      showToast('Campagne envoyee a ' + (d.sent || 0) + ' contacts');
+      setCampaignMode('list');
+      loadCampaigns();
+    } catch { showToast('Erreur'); }
+  }
+
+  async function submitWizard() {
+    try {
+      await apiFetch('/api/floorplan/setup', {
+        method: 'POST',
+        body: JSON.stringify({ tables: wizTables, zones: wizZones, groups: wizGroups, services: wizServices })
+      });
+      setWizardOpen(false);
+      showToast('Plan de salle configure !');
+      await fetchData();
+    } catch { showToast('Erreur'); }
+  }
+
   // ---- Floorplan status & drag-assign ----
   async function setTableStatus(tableId, status) {
     try {
@@ -648,6 +713,7 @@ export default function Dashboard() {
         .then(d => { if (d) { setStatsHistory(d.history || []); setStatsPeriod(d.period || null); } })
         .catch(() => {});
     }
+    if (page === 'campaigns') loadCampaigns();
   }, [page, statsRange]);
 
   // ---- Account ----
@@ -1067,7 +1133,10 @@ export default function Dashboard() {
               })}
               {tables.length === 0 && (
                 <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--tm)', fontSize: 13 }}>
-                  Aucune table &mdash; passez en mode &ldquo;Modifier plan&rdquo;
+                  <div>
+                    <div style={{ marginBottom: 8 }}>Configurez votre plan de salle</div>
+                    <button className="ba" onClick={() => { setWizardOpen(true); setWizStep(0); }}>Lancer l&apos;assistant</button>
+                  </div>
                 </div>
               )}
             </div>
@@ -2375,6 +2444,233 @@ export default function Dashboard() {
     );
   }
 
+  function renderCampaigns() {
+    if (campaignMode === 'create') return renderCampaignCreate();
+
+    return (
+        <div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
+                <div><div style={{ fontSize: 18, fontWeight: 700 }}>Campagnes email</div></div>
+                <button className="ba" onClick={() => { setCampaignMode('create'); setCampSubject(''); setCampBody(''); setCampFilterTags([]); setCampNotSeen(''); setCampPreviewCount(null); }}>+ Nouvelle campagne</button>
+            </div>
+            <div className="card">
+                {campaignList.length === 0 ? (
+                    <div className="ph" style={{ border: 'none', boxShadow: 'none' }}>
+                        <div className="phi">&#9993;</div>
+                        <div style={{ fontSize: 14, fontWeight: 600 }}>Aucune campagne envoyee</div>
+                        <div style={{ fontSize: 12, color: 'var(--tm)', marginTop: 4 }}>Envoyez votre premiere campagne email a vos clients</div>
+                    </div>
+                ) : campaignList.slice().reverse().map(c => (
+                    <div key={c.id} className="rw">
+                        <div>
+                            <div style={{ fontSize: 13, fontWeight: 600 }}>{c.subject}</div>
+                            <div style={{ fontSize: 11, color: 'var(--tm)' }}>{c.date?.slice(0,10)} - {c.sent} envoyes / {c.total} contacts</div>
+                        </div>
+                        <span className="badge" style={{ background: 'var(--okb)', color: 'var(--ok)' }}>Envoye</span>
+                    </div>
+                ))}
+            </div>
+        </div>
+    );
+  }
+
+  function renderCampaignCreate() {
+    const allTags = [...new Set(Object.values(state.contacts).flatMap(c => c.tags || []))].sort();
+    const templates = [
+        { label: 'Ca fait longtemps !', subject: 'On vous attend !', body: 'Bonjour {prenom}, cela fait un moment que nous ne vous avons pas vu chez {restaurant}. Votre table preferee vous attend ! Reservez vite.' },
+        { label: 'Soiree speciale', subject: 'Evenement special chez {restaurant}', body: 'Bonjour {prenom}, nous organisons une soiree speciale et nous serions ravis de vous compter parmi nos invites.' },
+        { label: 'Merci fidelite', subject: 'Merci pour votre fidelite', body: 'Bonjour {prenom}, merci de votre fidelite chez {restaurant}. Pour vous remercier, nous vous offrons un aperitif lors de votre prochaine visite.' },
+    ];
+
+    return (
+        <div>
+            <button className="ba" style={{ marginBottom: 14, background: 'var(--bg)', color: 'var(--ts)', border: '1px solid var(--b)' }}
+                onClick={() => setCampaignMode('list')}>&larr; Retour</button>
+
+            <div className="card" style={{ padding: 20, marginBottom: 14 }}>
+                <div className="card-t" style={{ marginBottom: 14 }}>Templates</div>
+                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                    {templates.map((t, i) => (
+                        <button key={i} className="ba" style={{ background: 'var(--al)', color: 'var(--ac)', border: '1px solid var(--ac)' }}
+                            onClick={() => { setCampSubject(t.subject); setCampBody(t.body); }}>{t.label}</button>
+                    ))}
+                </div>
+            </div>
+
+            <div className="card" style={{ padding: 20, marginBottom: 14 }}>
+                <div className="card-t" style={{ marginBottom: 14 }}>Destinataires</div>
+                {allTags.length > 0 && (
+                    <div style={{ marginBottom: 12 }}>
+                        <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--tm)', marginBottom: 6 }}>Filtrer par tag</div>
+                        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                            {allTags.map(tag => (
+                                <button key={tag} className="badge" style={{ cursor: 'pointer', border: 'none', fontFamily: 'var(--f)',
+                                    background: campFilterTags.includes(tag) ? 'var(--ac)' : 'var(--al)', color: campFilterTags.includes(tag) ? '#fff' : 'var(--ac)' }}
+                                    onClick={() => setCampFilterTags(prev => prev.includes(tag) ? prev.filter(t => t !== tag) : [...prev, tag])}>{tag}</button>
+                            ))}
+                        </div>
+                    </div>
+                )}
+                <div style={{ marginBottom: 12 }}>
+                    <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--tm)', marginBottom: 6 }}>Pas venu depuis (jours)</div>
+                    <input className="finp" type="number" style={{ width: 120, marginBottom: 0 }} placeholder="30"
+                        value={campNotSeen} onChange={e => setCampNotSeen(e.target.value)} />
+                </div>
+                <button className="ba" style={{ background: 'var(--bg)', color: 'var(--ts)', border: '1px solid var(--b)' }}
+                    onClick={previewCampaign}>Compter les destinataires</button>
+                {campPreviewCount !== null && (
+                    <div style={{ marginTop: 8, fontSize: 13, fontWeight: 700, color: 'var(--ac)' }}>{campPreviewCount} contacts correspondants</div>
+                )}
+            </div>
+
+            <div className="card" style={{ padding: 20, marginBottom: 14 }}>
+                <div className="card-t" style={{ marginBottom: 14 }}>Contenu</div>
+                <div className="finp-group">
+                    <div className="finp-label">Objet</div>
+                    <input className="finp" value={campSubject} onChange={e => setCampSubject(e.target.value)} placeholder="Objet de l'email" />
+                </div>
+                <div className="finp-group">
+                    <div className="finp-label">Message</div>
+                    <textarea className="dinp" rows={6} value={campBody} onChange={e => setCampBody(e.target.value)}
+                        placeholder="Bonjour {prenom}, ..." />
+                </div>
+                <div style={{ fontSize: 10, color: 'var(--tm)', marginTop: 4 }}>Variables : {'{prenom}'}, {'{restaurant}'}</div>
+            </div>
+
+            <button className="ba" style={{ padding: '12px 24px', fontSize: 14 }} onClick={sendCampaign}>Envoyer maintenant</button>
+        </div>
+    );
+  }
+
+  function renderFloorplanWizard() {
+    if (!wizardOpen) return null;
+    const steps = ['Capacite', 'Zones', 'Tables', 'Modulables', 'Services', 'Confirmation'];
+    const allZoneOptions = ['Salle', 'Terrasse', 'Bar', 'Salon prive'];
+
+    function addQuickTables(zone, count, seats) {
+        const existing = wizTables.filter(t => t.zone === zone);
+        const start = existing.length + 1;
+        const newTables = Array.from({ length: count }, (_, i) => ({
+            id: zone.charAt(0).toUpperCase() + (start + i),
+            zone, capacity: seats,
+        }));
+        setWizTables([...wizTables, ...newTables]);
+    }
+
+    return (
+        <div className="ob-overlay" onClick={() => setWizardOpen(false)}>
+            <div className="ob-card" style={{ maxWidth: 560 }} onClick={e => e.stopPropagation()}>
+                <div className="ob-steps">
+                    {steps.map((_, i) => (
+                        <div key={i} className={'ob-step' + (i < wizStep ? ' done' : '') + (i === wizStep ? ' active' : '')} />
+                    ))}
+                </div>
+                <div className="ob-title">{steps[wizStep]}</div>
+
+                {wizStep === 0 && (
+                    <div>
+                        <div className="ob-desc">Combien de couverts pouvez-vous accueillir au maximum ?</div>
+                        <input className="ob-input" type="number" min="4" max="500" value={wizCapacity} onChange={e => setWizCapacity(e.target.value)} />
+                    </div>
+                )}
+
+                {wizStep === 1 && (
+                    <div>
+                        <div className="ob-desc">Quelles zones avez-vous ?</div>
+                        {allZoneOptions.map(z => (
+                            <label key={z} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 0', cursor: 'pointer' }}>
+                                <input type="checkbox" checked={wizZones.includes(z)}
+                                    onChange={() => setWizZones(prev => prev.includes(z) ? prev.filter(x => x !== z) : [...prev, z])}
+                                    style={{ accentColor: '#4ECDC4', width: 18, height: 18 }} />
+                                <span style={{ fontSize: 14, fontWeight: 500 }}>{z}</span>
+                            </label>
+                        ))}
+                    </div>
+                )}
+
+                {wizStep === 2 && (
+                    <div>
+                        <div className="ob-desc">Ajoutez vos tables par zone</div>
+                        {wizZones.map(zone => {
+                            const zoneTables = wizTables.filter(t => t.zone === zone);
+                            return (
+                                <div key={zone} style={{ marginBottom: 16 }}>
+                                    <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 8 }}>{zone}</div>
+                                    <div style={{ display: 'flex', gap: 8, marginBottom: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+                                        <input className="finp" type="number" min="1" max="20" defaultValue="4" style={{ width: 60, marginBottom: 0 }} id={'wiz-quick-count-' + zone} />
+                                        <span style={{ fontSize: 12, color: 'var(--tm)' }}>tables de</span>
+                                        <select className="finp" style={{ width: 70, marginBottom: 0 }} id={'wiz-quick-seats-' + zone} defaultValue="4">
+                                            {[2,4,6,8,10,12].map(s => <option key={s} value={s}>{s}p</option>)}
+                                        </select>
+                                        <button className="ba" onClick={() => {
+                                            const c = parseInt(document.getElementById('wiz-quick-count-' + zone)?.value || '4');
+                                            const s = parseInt(document.getElementById('wiz-quick-seats-' + zone)?.value || '4');
+                                            addQuickTables(zone, c, s);
+                                        }}>Ajouter</button>
+                                    </div>
+                                    {zoneTables.map((t, i) => (
+                                        <div key={t.id} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+                                            <span style={{ fontSize: 12, fontWeight: 600, width: 40 }}>{t.id}</span>
+                                            <select className="finp" style={{ width: 70, marginBottom: 0 }} value={t.capacity}
+                                                onChange={e => setWizTables(prev => prev.map(x => x.id === t.id ? { ...x, capacity: parseInt(e.target.value) } : x))}>
+                                                {[1,2,3,4,5,6,8,10,12].map(s => <option key={s} value={s}>{s}p</option>)}
+                                            </select>
+                                            <button style={{ border: 'none', background: 'none', color: 'var(--da)', cursor: 'pointer', fontSize: 14 }}
+                                                onClick={() => setWizTables(prev => prev.filter(x => x.id !== t.id))}>&#10005;</button>
+                                        </div>
+                                    ))}
+                                </div>
+                            );
+                        })}
+                    </div>
+                )}
+
+                {wizStep === 3 && (
+                    <div>
+                        <div className="ob-desc">Certaines tables peuvent etre assemblees ?</div>
+                        <div style={{ fontSize: 12, color: 'var(--tm)', marginBottom: 12 }}>Vous pourrez configurer cela plus tard dans Modifier plan</div>
+                    </div>
+                )}
+
+                {wizStep === 4 && (
+                    <div>
+                        <div className="ob-desc">Quels services proposez-vous ?</div>
+                        {[{key:'midi',label:'Midi'},{key:'soir',label:'Soir'}].map(s => (
+                            <div key={s.key} style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10 }}>
+                                <span style={{ fontSize: 13, fontWeight: 600, width: 50 }}>{s.label}</span>
+                                <input className="finp" type="time" style={{ width: 110, marginBottom: 0 }}
+                                    value={wizServices[s.key]?.from || ''} onChange={e => setWizServices(prev => ({...prev, [s.key]: {...prev[s.key], from: e.target.value}}))} />
+                                <span style={{ color: 'var(--tm)' }}>a</span>
+                                <input className="finp" type="time" style={{ width: 110, marginBottom: 0 }}
+                                    value={wizServices[s.key]?.to || ''} onChange={e => setWizServices(prev => ({...prev, [s.key]: {...prev[s.key], to: e.target.value}}))} />
+                            </div>
+                        ))}
+                    </div>
+                )}
+
+                {wizStep === 5 && (
+                    <div>
+                        <div className="ob-desc">Votre plan de salle est pret !</div>
+                        <div style={{ padding: 16, background: 'var(--bg)', borderRadius: 10, fontSize: 14 }}>
+                            <div>{wizCapacity} couverts - {wizTables.length} tables - {wizZones.length} zone{wizZones.length > 1 ? 's' : ''}</div>
+                            <div style={{ fontSize: 12, color: 'var(--tm)', marginTop: 4 }}>{wizZones.join(', ')}</div>
+                        </div>
+                    </div>
+                )}
+
+                <div className="ob-actions" style={{ marginTop: 20 }}>
+                    {wizStep > 0 && <button className="ob-btn ob-btn-s" onClick={() => setWizStep(wizStep - 1)}>Precedent</button>}
+                    {wizStep < 5 ? (
+                        <button className="ob-btn ob-btn-p" onClick={() => setWizStep(wizStep + 1)}>Suivant</button>
+                    ) : (
+                        <button className="ob-btn ob-btn-p" onClick={submitWizard}>Confirmer et activer</button>
+                    )}
+                </div>
+            </div>
+        </div>
+    );
+  }
+
   function renderAccount() {
     const u = state.user;
 
@@ -2460,6 +2756,7 @@ export default function Dashboard() {
       case 'reviews': return renderReviews();
       case 'contacts': return renderContacts();
       case 'waitlist': return renderWaitlist();
+      case 'campaigns': return renderCampaigns();
       case 'config': return renderConfig();
       case 'stats': return renderStats();
       case 'account': return renderAccount();
@@ -2486,6 +2783,7 @@ export default function Dashboard() {
         { id: 'conversations', icon: '\u25C8', label: 'Conversations', badge: convList.length },
         { id: 'reviews', icon: '\u2605', label: 'Avis', badge: state.reviewQueue.length },
         { id: 'contacts', icon: '\u25C7', label: 'Contacts' },
+        { id: 'campaigns', icon: '\u2709', label: 'Campagnes' },
         { id: 'waitlist', icon: '\u23F1', label: "Liste d'attente", badge: state.waitlistEntries.filter(w => w.status === 'waiting' || !w.status).length },
       ]
     },
@@ -2510,6 +2808,7 @@ export default function Dashboard() {
     { id: 'menu', icon: '\u25D0', label: 'Menu' },
     { id: 'reviews', icon: '\u2605', label: 'Avis' },
     { id: 'contacts', icon: '\u25C7', label: 'Contacts' },
+    { id: 'campaigns', icon: '\u2709', label: 'Campagnes' },
     { id: 'waitlist', icon: '\u23F1', label: 'Attente' },
     { id: 'config', icon: '\u2699', label: 'Config' },
     { id: 'stats', icon: '\u26AB', label: 'Stats' },
@@ -2877,6 +3176,7 @@ export default function Dashboard() {
       {/* Modals */}
       {renderNewResaModal()}
       {renderEditResaModal()}
+      {renderFloorplanWizard()}
 
       {/* Onboarding */}
       {renderOnboarding()}

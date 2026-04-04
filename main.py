@@ -151,6 +151,7 @@ table_statuses = {}         # rid -> { "date:service:table_id": status }
 table_groups = {}           # rid -> [{"tables": ["T3","T4"], "name": "T3+T4"}]
 review_queue = {}           # restaurant_id: [reviews]
 contacts = {}               # restaurant_id: {phone: contact_data}
+campaigns_store = {}        # rid -> [campaign dicts]
 restaurant_status = {}      # restaurant_id: {status, message, closed_dates, full_dates, temp_message, ...}
 stats = {}                  # restaurant_id: {messages_today, bookings_today, languages, last_reset}
 daily_stats_history = {}    # restaurant_id: [snapshots]
@@ -6039,6 +6040,202 @@ async def api_table_ungroup(request: Request):
     table_groups[rid] = [g for g in groups if g.get("name") != name]
     bump_version(rid)
     return {"status": "ok", "groups": table_groups[rid]}
+
+
+@app.post("/api/floorplan/setup")
+async def api_floorplan_setup(request: Request):
+    auth = get_auth(request)
+    if not auth:
+        return Response(status_code=401)
+    rid = auth["restaurant_id"]
+    data = await request.json()
+    tables_data = data.get("tables", [])
+    zones = data.get("zones", ["Salle"])
+    groups_data = data.get("groups", [])
+    services = data.get("services", {})
+
+    # Auto-position tables by zone
+    zone_list = list(set(t.get("zone", "Salle") for t in tables_data)) or zones
+    new_tables = []
+    for zi, zone in enumerate(zone_list):
+        zone_tables = [t for t in tables_data if t.get("zone") == zone]
+        cols = max(2, int(len(zone_tables) ** 0.5) + 1)
+        x_start = (zi / len(zone_list)) * 80 + 10
+        x_range = 80 / len(zone_list) - 5
+        for ti, t in enumerate(zone_tables):
+            row = ti // cols
+            col = ti % cols
+            new_tables.append({
+                "id": t.get("id", f"T{len(new_tables)+1}"),
+                "seats": int(t.get("capacity", t.get("seats", 4))),
+                "shape": "round" if int(t.get("capacity", t.get("seats", 4))) <= 4 else "rect",
+                "zone": zone.lower(),
+                "x": round(x_start + (col / max(cols-1, 1)) * x_range, 1),
+                "y": round(15 + (row / max(3, 1)) * 65, 1),
+            })
+
+    floor_tables[rid] = new_tables
+    rest = restaurants_cache.get(rid)
+    if rest:
+        rest["floor_tables"] = new_tables
+        if services:
+            rest.setdefault("settings", {})["services"] = services
+    table_groups[rid] = groups_data
+    init_daily_slots(rid)
+    await db_save_restaurant(rid, rest)
+    bump_version(rid)
+    return {"status": "ok", "tables": new_tables}
+
+
+@app.get("/api/widget/{slug}/config")
+async def api_widget_config(slug: str):
+    rid = None
+    for r_id, r in restaurants_cache.items():
+        if r.get("slug") == slug:
+            rid = r_id
+            break
+    if not rid:
+        return JSONResponse(status_code=404, content={"error": "Restaurant not found"})
+    rest = restaurants_cache[rid]
+    ctx = rest.get("settings", {})
+    # Available slots for next 14 days
+    available = {}
+    for i in range(14):
+        d = (today_paris() + timedelta(days=i)).isoformat()
+        slots = get_available_slots(rid, 2)
+        available[d] = [s for s in slots if s.get("available", 0) > 0]
+    zones = list(set(t.get("zone", "salle") for t in floor_tables.get(rid, [])))
+    return {
+        "name": rest["name"],
+        "hours": ctx.get("hours", ""),
+        "zones": zones,
+        "max_covers": 12,
+        "available": available,
+    }
+
+@app.post("/api/widget/{slug}/book")
+async def api_widget_book(request: Request, slug: str):
+    client_ip = request.headers.get("x-forwarded-for", request.client.host if request.client else "unknown").split(",")[0].strip()
+    rl_ok, *_ = check_rate_limit(client_ip, "default")
+    if not rl_ok:
+        return JSONResponse(status_code=429, content={"error": "Trop de tentatives"})
+    rid = None
+    for r_id, r in restaurants_cache.items():
+        if r.get("slug") == slug:
+            rid = r_id
+            break
+    if not rid:
+        return JSONResponse(status_code=404, content={"error": "Restaurant not found"})
+    data = await request.json()
+    sanitize_dict(data, ["name", "phone", "email", "notes", "zone"], 500)
+    name = data.get("name", "")
+    phone = data.get("phone", "")
+    email = data.get("email", "")
+    if not name or not phone:
+        return JSONResponse(status_code=400, content={"error": "Nom et telephone requis"})
+    booking_date = data.get("date", today_paris().isoformat())
+    booking_time = data.get("time", "")
+    covers = int(data.get("covers", 2))
+    zone = data.get("zone", "")
+    notes = data.get("notes", "")
+    rid_bookings = bookings.setdefault(rid, [])
+    booking_id = f"R{len(rid_bookings)+1}"
+    assigned_table = None
+    if booking_time:
+        assigned_table = find_best_table(rid, booking_time, covers, zone or None)
+        if assigned_table:
+            assign_table(rid, booking_time, assigned_table, booking_id)
+    new_booking = {
+        "id": booking_id, "phone": phone, "name": name,
+        "date": booking_date, "time": booking_time, "booking_time": booking_time,
+        "covers": covers, "table": assigned_table, "zone": zone,
+        "source": "widget", "status": "confirmed" if assigned_table else "pending",
+        "email": email, "notes": notes, "timestamp": datetime.utcnow().isoformat(),
+    }
+    rid_bookings.append(new_booking)
+    await db_save_booking(rid, new_booking)
+    bump_version(rid)
+    # Create/update contact
+    rid_contacts = contacts.setdefault(rid, {})
+    if phone not in rid_contacts:
+        rid_contacts[phone] = {"phone": phone, "name": name, "email": email, "source": "widget", "visits": 0, "first_seen": datetime.utcnow().isoformat()}
+    rid_contacts[phone]["visits"] = rid_contacts[phone].get("visits", 0) + 1
+    rid_contacts[phone]["last_seen"] = datetime.utcnow().isoformat()
+    if email:
+        rid_contacts[phone]["email"] = email
+    await db_save_contact(rid, phone, rid_contacts[phone])
+    return {"status": "ok", "booking_id": booking_id, "table": assigned_table}
+
+
+@app.get("/api/campaigns")
+async def api_list_campaigns(request: Request):
+    auth = get_auth(request)
+    if not auth:
+        return Response(status_code=401)
+    rid = auth["restaurant_id"]
+    return {"campaigns": campaigns_store.get(rid, [])}
+
+@app.post("/api/campaigns/preview")
+async def api_campaign_preview(request: Request):
+    auth = get_auth(request)
+    if not auth:
+        return Response(status_code=401)
+    rid = auth["restaurant_id"]
+    data = await request.json()
+    filters = data.get("filters", {})
+    matched = _filter_contacts(rid, filters)
+    return {"count": len(matched)}
+
+@app.post("/api/campaigns/send")
+async def api_campaign_send(request: Request):
+    auth = get_auth(request)
+    if not auth:
+        return Response(status_code=401)
+    rid = auth["restaurant_id"]
+    data = await request.json()
+    subject = sanitize_input(data.get("subject", ""), 200)
+    body = sanitize_input(data.get("body", ""), 5000)
+    filters = data.get("filters", {})
+    if not subject or not body:
+        return JSONResponse(status_code=400, content={"error": "Sujet et message requis"})
+    rest = restaurants_cache.get(rid, {})
+    rest_name = rest.get("name", "Restaurant")
+    matched = _filter_contacts(rid, filters)
+    sent_count = 0
+    for ct in matched:
+        ct_email = ct.get("email")
+        if not ct_email:
+            continue
+        ct_name = (ct.get("name") or "").split()[0] if ct.get("name") else ""
+        html = body.replace("{prenom}", ct_name).replace("{restaurant}", rest_name)
+        subj = subject.replace("{prenom}", ct_name).replace("{restaurant}", rest_name)
+        try:
+            if BREVO_API_KEY:
+                async with httpx.AsyncClient(timeout=10) as client:
+                    await client.post("https://api.brevo.com/v3/smtp/email",
+                        headers={"api-key": BREVO_API_KEY, "Content-Type": "application/json"},
+                        json={"sender": {"name": rest_name, "email": "contact@guestscale.com"},
+                              "to": [{"email": ct_email, "name": ct.get("name", "")}],
+                              "subject": subj, "htmlContent": f"<div style='font-family:sans-serif;max-width:560px;margin:0 auto;padding:24px'>{html}</div>"})
+                sent_count += 1
+        except Exception as e:
+            logger.error(f"Campaign email error: {e}")
+    campaign = {"id": f"C{len(campaigns_store.get(rid, []))+1}", "subject": subject, "sent": sent_count,
+                "total": len(matched), "date": now_paris().isoformat(), "filters": filters}
+    campaigns_store.setdefault(rid, []).append(campaign)
+    return {"status": "ok", "sent": sent_count}
+
+def _filter_contacts(rid: str, filters: dict) -> list:
+    rid_contacts = contacts.get(rid, {})
+    matched = list(rid_contacts.values())
+    tags = filters.get("tags", [])
+    if tags:
+        matched = [c for c in matched if any(t in (c.get("tags") or []) for t in tags)]
+    not_seen_days = filters.get("not_seen_days")
+    if not_seen_days:
+        cutoff = (today_paris() - timedelta(days=int(not_seen_days))).isoformat()
+        matched = [c for c in matched if (c.get("last_seen") or "") < cutoff]
+    return matched
 
 
 @app.get("/api/reviews")
