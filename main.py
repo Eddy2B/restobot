@@ -37,6 +37,13 @@ import anthropic
 import httpx
 import asyncpg
 import bcrypt
+
+TONE_PROMPTS = {
+    "premium": "STYLE : Vouvoiement obligatoire. Langage soutenu et elegant. Formulations raffinées. Pas d'emojis. Ton d'un maitre d'hotel de palace.",
+    "casual": "STYLE : Ton chaleureux et decontracte. Tutoiement accepte si le client tutoie. Emojis moderes (1-2 par message max).",
+    "beach": "STYLE : Tres decontracte et amical. Tutoiement naturel. Emojis frequents. Ton leger et ensoleille.",
+    "classic": "STYLE : Vouvoiement systematique. Sobre et professionnel. Pas d'emojis. Phrases courtes et precises.",
+}
 from pathlib import Path
 from fastapi import FastAPI, Request, Response, BackgroundTasks
 from fastapi.responses import HTMLResponse, JSONResponse, FileResponse, RedirectResponse
@@ -155,6 +162,9 @@ campaigns_store = {}        # rid -> [campaign dicts]
 restaurant_status = {}      # restaurant_id: {status, message, closed_dates, full_dates, temp_message, ...}
 stats = {}                  # restaurant_id: {messages_today, bookings_today, languages, last_reset}
 daily_stats_history = {}    # restaurant_id: [snapshots]
+ai_paused_conversations = {}  # rid -> {phone: pause_until_iso}
+escalations = {}            # rid -> [escalation dicts]
+missed_call_tracker = {}    # rid -> {phone: {wa_sent_at, call_sent_at, date}}
 
 # Waitlist per restaurant
 # waitlist[rid] = [{"id": "W1", "phone": ..., "name": ..., "covers": 2, "service": "soir", "date": "2026-03-26", "added_at": ..., "status": "waiting"|"notified"|"accepted"|"declined"|"expired", "notified_at": None, "position": 1}]
@@ -1498,6 +1508,7 @@ RÈGLES HORAIRES STRICTES :
 - Si le client demande "ce midi" et qu'il est après 14h, le service du midi est terminé. Propose le soir ou un autre jour.
 - Ne propose JAMAIS un créneau dans le passé (ex: ne pas proposer 19h si il est déjà 21h).
 
+{TONE_PROMPTS.get(ctx.get('tone_preset', ''), '')}
 TON : {ctx.get('tone', 'Professionnel mais chaleureux')}
 LANGUES : Réponds dans la langue du client. Tu parles {ctx.get('languages', 'français')}.
 {status_context}
@@ -1512,6 +1523,8 @@ INFORMATIONS DU RESTAURANT :
 
 MENU :
 {ctx.get('menu', 'Non renseigné')}
+{('LIEN MENU : ' + ctx.get('menu_url', '')) if ctx.get('menu_url') else ''}
+Si le client demande la carte ou le menu et qu'un lien menu est disponible, envoie-le.
 
 ALLERGÈNES : {ctx.get('allergens_policy', 'Demander au restaurant')}
 {booking_section}
@@ -1527,6 +1540,7 @@ RÈGLES STRICTES :
 - Sois concis : 2-4 phrases max par réponse, sauf si le client pose plusieurs questions.
 - Si une demande est complexe ou urgente, propose de transférer au restaurant.
 - N'explicite JAMAIS que tu as acces a un profil CRM ou a des donnees personnelles. Utilise les infos naturellement.
+- Si tu ne peux PAS traiter la demande (allergie grave mettant en danger la vie, plainte serieuse, demande d'evenement prive, groupe >12 personnes, client demande explicitement un humain, ou 3 echanges sans resolution), reponds UNIQUEMENT avec ce JSON exact sur une seule ligne : {{"action":"escalate","reason":"...","summary":"..."}}
 """
 
 
@@ -1867,6 +1881,29 @@ async def send_daily_recap():
             st = stats.get(rid, {})
             save_daily_stats_snapshot(rid, st)
             logger.info(f"Daily recap sent to owner of {rest['name']}")
+
+            # Also send recap via email if configured
+            user_email = None
+            if db_pool:
+                try:
+                    async with db_pool.acquire() as conn:
+                        user_email = await conn.fetchval(
+                            "SELECT email FROM users WHERE restaurant_id = $1::uuid LIMIT 1", rid)
+                except Exception:
+                    pass
+            if user_email and BREVO_API_KEY:
+                try:
+                    async with httpx.AsyncClient(timeout=15) as client:
+                        await client.post("https://api.brevo.com/v3/smtp/email",
+                            headers={"api-key": BREVO_API_KEY, "Content-Type": "application/json"},
+                            json={
+                                "sender": {"name": "GuestScale", "email": "contact@guestscale.com"},
+                                "to": [{"email": user_email}],
+                                "subject": f"Recap {rest['name']} — {today_paris().strftime('%d/%m')}",
+                                "htmlContent": f"<div style='font-family:sans-serif;max-width:560px;margin:0 auto;padding:24px'><pre style='white-space:pre-wrap;font-family:inherit'>{recap}</pre></div>",
+                            })
+                except Exception as e:
+                    logger.error(f"Recap email error for {rid}: {e}")
         except Exception as e:
             logger.error(f"Daily recap error for {rest['name']}: {e}")
 
@@ -2108,6 +2145,18 @@ async def process_and_reply(rid: str, phone_number_id: str, customer_phone: str,
             logger.info(f"Owner command [{rest['name']}]: {message_text[:50]}")
             return
 
+    # Check if AI is paused for this restaurant or conversation
+    rest_settings = rest.get("settings", {})
+    if not rest_settings.get("ai_enabled", True):
+        return
+    paused_until = rest.get("ai_paused_until", "")
+    if paused_until and now_paris().isoformat() < paused_until:
+        return
+    conv_pauses = ai_paused_conversations.get(rid, {})
+    conv_pause = conv_pauses.get(customer_phone, "")
+    if conv_pause and now_paris().isoformat() < conv_pause:
+        return
+
     # Check waitlist response first
     waitlist_response = await handle_waitlist_response(rid, customer_phone, message_text)
     if waitlist_response:
@@ -2131,6 +2180,28 @@ async def process_and_reply(rid: str, phone_number_id: str, customer_phone: str,
     claude_messages.append({"role": "user", "content": message_text})
 
     response = await ask_claude(system_prompt, claude_messages)
+
+    # Check for escalation request
+    if '{"action":"escalate"' in response:
+        try:
+            import json as json_mod
+            esc_data = json_mod.loads(response.strip())
+            if esc_data.get("action") == "escalate":
+                escalations.setdefault(rid, []).append({
+                    "phone": customer_phone, "name": customer_name,
+                    "reason": esc_data.get("reason", ""), "summary": esc_data.get("summary", ""),
+                    "status": "open", "created_at": now_paris().isoformat(),
+                })
+                # Pause AI on this conversation
+                ai_paused_conversations.setdefault(rid, {})[customer_phone] = (now_paris() + timedelta(hours=4)).isoformat()
+                response = "Je transfère votre demande à l'équipe du restaurant. Vous serez recontacté rapidement. 🙏"
+                # Notify owner
+                if owner_phone:
+                    owner_msg = f"⚠️ ESCALADE\n{customer_name or customer_phone}\nRaison: {esc_data.get('reason', '?')}\nResume: {esc_data.get('summary', '?')}"
+                    await send_whatsapp_message(phone_number_id, access_token, owner_phone, owner_msg)
+                bump_version(rid)
+        except Exception:
+            pass  # Not valid JSON, treat as normal response
 
     save_message(rid, customer_phone, "user", message_text)
     save_message(rid, customer_phone, "assistant", response)
@@ -5696,6 +5767,15 @@ async def handle_missed_call(caller_phone: str, restaurant_phone: str):
         return
 
     caller_normalized = normalize_phone(caller_phone)
+
+    # Anti-spam: max 1 per phone per day
+    today = today_paris().isoformat()
+    tracker = missed_call_tracker.setdefault(rid, {})
+    if caller_normalized in tracker and tracker[caller_normalized].get("date") == today:
+        logger.info(f"Missed call skipped (already handled today): {caller_phone}")
+        return
+    tracker[caller_normalized] = {"wa_sent_at": now_paris().isoformat(), "date": today}
+
     restaurant_name = rest.get("name", "notre restaurant")
 
     # Try template first, fallback to regular message
@@ -5769,6 +5849,86 @@ async def twilio_status_callback(request: Request):
     form = await request.form()
     logger.info(f"Twilio status: {dict(form)}")
     return {"status": "ok"}
+
+
+# ==============================================================
+# AI PAUSE / ESCALATION / MISSED CALLS ENDPOINTS
+# ==============================================================
+
+@app.post("/api/toggle-ai")
+async def api_toggle_ai(request: Request):
+    auth = get_auth(request)
+    if not auth:
+        return Response(status_code=401)
+    rid = auth["restaurant_id"]
+    data = await request.json()
+    rest = restaurants_cache.get(rid)
+    if rest:
+        rest.setdefault("settings", {})["ai_enabled"] = data.get("enabled", True)
+        await db_save_restaurant(rid, rest)
+    bump_version(rid)
+    return {"status": "ok"}
+
+@app.post("/api/pause-ai")
+async def api_pause_ai(request: Request):
+    auth = get_auth(request)
+    if not auth:
+        return Response(status_code=401)
+    rid = auth["restaurant_id"]
+    data = await request.json()
+    minutes = int(data.get("minutes", 60))
+    rest = restaurants_cache.get(rid)
+    if rest:
+        rest["ai_paused_until"] = (now_paris() + timedelta(minutes=minutes)).isoformat()
+    return {"status": "ok", "paused_until": rest.get("ai_paused_until") if rest else None}
+
+@app.post("/api/conversation/pause")
+async def api_pause_conversation(request: Request):
+    auth = get_auth(request)
+    if not auth:
+        return Response(status_code=401)
+    rid = auth["restaurant_id"]
+    data = await request.json()
+    phone = data.get("phone", "")
+    paused = data.get("paused", True)
+    minutes = int(data.get("minutes", 120))
+    if paused:
+        ai_paused_conversations.setdefault(rid, {})[phone] = (now_paris() + timedelta(minutes=minutes)).isoformat()
+    else:
+        ai_paused_conversations.get(rid, {}).pop(phone, None)
+    return {"status": "ok"}
+
+@app.get("/api/escalations")
+async def api_escalations(request: Request):
+    auth = get_auth(request)
+    if not auth:
+        return Response(status_code=401)
+    rid = auth["restaurant_id"]
+    return {"escalations": escalations.get(rid, [])}
+
+@app.post("/api/escalations/resolve")
+async def api_resolve_escalation(request: Request):
+    auth = get_auth(request)
+    if not auth:
+        return Response(status_code=401)
+    rid = auth["restaurant_id"]
+    data = await request.json()
+    phone = data.get("phone", "")
+    for e in escalations.get(rid, []):
+        if e["phone"] == phone and e["status"] == "open":
+            e["status"] = "resolved"
+            e["resolved_at"] = now_paris().isoformat()
+    # Unpause conversation
+    ai_paused_conversations.get(rid, {}).pop(phone, None)
+    return {"status": "ok"}
+
+@app.get("/api/missed-calls")
+async def api_missed_calls(request: Request):
+    auth = get_auth(request)
+    if not auth:
+        return Response(status_code=401)
+    rid = auth["restaurant_id"]
+    return {"calls": [{"phone": p, **v} for p, v in missed_call_tracker.get(rid, {}).items()]}
 
 
 # ==============================================================
