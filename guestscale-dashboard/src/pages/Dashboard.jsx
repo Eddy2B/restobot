@@ -936,7 +936,7 @@ export default function Dashboard() {
         </div>
 
         {fpMode === 'resa' && (
-          <input className="finp" style={{ marginBottom: 10 }} placeholder="\uD83D\uDD0D Rechercher un client ou une table..."
+          <input className="finp" style={{ marginBottom: 10 }} placeholder="Rechercher un client ou une table..."
             value={fpSearch} onChange={e => setFpSearch(e.target.value)} />
         )}
 
@@ -1275,7 +1275,7 @@ export default function Dashboard() {
 
         {/* Search bar */}
         <input className="finp" style={{ marginBottom: 14 }}
-            placeholder="🔍 Rechercher une reservation (nom, telephone, email...)"
+            placeholder="Rechercher une reservation (nom, telephone, email...)"
             value={bkSearch} onChange={e => setBkSearch(e.target.value)} />
 
         {/* Conditional views */}
@@ -2500,7 +2500,7 @@ export default function Dashboard() {
       items: [
         { id: 'config', icon: '\u2699', label: 'Configuration' },
         { id: 'stats', icon: '\u26AB', label: 'Statistiques' },
-        { id: 'account', icon: '\uD83D\uDC64', label: 'Mon compte' },
+        { id: 'account', icon: '\u25CB', label: 'Mon compte' },
       ]
     },
   ];
@@ -2519,7 +2519,7 @@ export default function Dashboard() {
     { id: 'waitlist', icon: '\u23F1', label: 'Attente' },
     { id: 'config', icon: '\u2699', label: 'Config' },
     { id: 'stats', icon: '\u26AB', label: 'Stats' },
-    { id: 'account', icon: '\uD83D\uDC64', label: 'Compte' },
+    { id: 'account', icon: '\u25CB', label: 'Compte' },
   ];
 
   // ========================================
