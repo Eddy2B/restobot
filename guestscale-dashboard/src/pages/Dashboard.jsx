@@ -1006,7 +1006,9 @@ export default function Dashboard() {
 
                     {fpStatusMenu === t.id && (
                       <div onClick={e => e.stopPropagation()} style={{
-                        position: 'absolute', top: '100%', left: '50%', transform: 'translateX(-50%)',
+                        position: 'absolute',
+                        ...((t.y || 20) > 50 ? { bottom: '100%', marginBottom: 4 } : { top: '100%', marginTop: 4 }),
+                        left: '50%', transform: 'translateX(-50%)',
                         background: 'var(--bg)', border: '1px solid var(--bl)', borderRadius: 10,
                         padding: 8, zIndex: 100, minWidth: 140, boxShadow: '0 4px 16px rgba(0,0,0,.15)',
                         display: 'flex', flexDirection: 'column', gap: 4,
