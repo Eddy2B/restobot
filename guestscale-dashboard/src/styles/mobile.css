@@ -63,9 +63,10 @@
 
   /* Floorplan */
   .fp-layout{flex-direction:column}
+  .fp-main{width:100%;min-width:0;flex:none}
   .fp-sidebar{width:100%}
   .fp-sb-list{max-height:200px}
-  #fpCanvas{height:280px!important}
+  .fp-canvas,#fpCanvas{height:300px!important;min-height:300px!important;position:relative!important;display:block!important}
   .ftbl{font-size:8px!important}
 
   /* Conversations split → stack */
@@ -85,7 +86,7 @@
   .di{width:28px;height:28px;font-size:12px}
 
   /* Floorplan mini */
-  .fc{height:120px}
+  .fc{height:140px;position:relative}
   .fm{padding:12px}
 
   /* Touch targets */
@@ -130,7 +131,7 @@
   .sc{padding:10px 8px}
   .cal-num{font-size:9px}
   .cal-dow{font-size:7px}
-  #fpCanvas{height:220px!important}
+  .fp-canvas,#fpCanvas{height:240px!important;min-height:240px!important}
   .fp-sb-list{max-height:140px}
   .modal{padding:14px}
   .hero h1{font-size:24px}
