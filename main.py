@@ -1651,15 +1651,18 @@ def get_conversation(rid: str, customer_phone: str) -> list:
     return conversations.get(key, [])
 
 
-def save_message(rid: str, customer_phone: str, role: str, content: str):
+def save_message(rid: str, customer_phone: str, role: str, content: str, sender_type=None):
     key = f"{rid}:{customer_phone}"
     if key not in conversations:
         conversations[key] = []
-    conversations[key].append({
+    msg = {
         "role": role,
         "content": content,
         "timestamp": datetime.utcnow().isoformat(),
-    })
+    }
+    if sender_type:
+        msg["sender_type"] = sender_type
+    conversations[key].append(msg)
     conversations[key] = conversations[key][-30:]
     bump_version(rid)
     # Persist async
@@ -5963,6 +5966,39 @@ async def twilio_status_callback(request: Request):
     logger.info(f"Twilio status: {dict(form)}")
     return {"status": "ok"}
 
+@app.post("/twilio/confirm-gather")
+async def twilio_confirm_gather(request: Request):
+    """Handle DTMF response from reservation confirmation call."""
+    form = await request.form()
+    digits = form.get("Digits", "")
+    caller = form.get("From", "")
+    logger.info(f"Twilio DTMF: caller={caller} digits={digits}")
+
+    caller_norm = normalize_phone(caller)
+
+    # Find the restaurant and booking
+    for rid, rid_bookings in bookings.items():
+        for b in rid_bookings:
+            if b.get("phone") == caller_norm and not b.get("reminder_confirmed"):
+                if digits == "1":
+                    b["reminder_confirmed"] = True
+                    logger.info(f"Booking confirmed via DTMF: {b.get('name')} {b.get('date')}")
+                    twiml = '<?xml version="1.0" encoding="UTF-8"?><Response><Say language="fr-FR" voice="Polly.Lea">Merci, votre reservation est confirmee. A bientot !</Say></Response>'
+                elif digits == "2":
+                    b["reminder_confirmed"] = False
+                    b["status"] = "cancelled"
+                    if b.get("table") and b.get("booking_time"):
+                        release_table(rid, b["booking_time"], b["table"])
+                    logger.info(f"Booking cancelled via DTMF: {b.get('name')} {b.get('date')}")
+                    twiml = '<?xml version="1.0" encoding="UTF-8"?><Response><Say language="fr-FR" voice="Polly.Lea">Votre reservation a ete annulee. Merci et a bientot.</Say></Response>'
+                    bump_version(rid)
+                else:
+                    twiml = '<?xml version="1.0" encoding="UTF-8"?><Response><Say language="fr-FR" voice="Polly.Lea">Appuyez 1 pour confirmer ou 2 pour annuler.</Say><Gather numDigits="1" action="/twilio/confirm-gather"/></Response>'
+                return Response(content=twiml, media_type="application/xml")
+
+    twiml = '<?xml version="1.0" encoding="UTF-8"?><Response><Say language="fr-FR" voice="Polly.Lea">Merci de votre appel. A bientot.</Say></Response>'
+    return Response(content=twiml, media_type="application/xml")
+
 
 # ==============================================================
 # AI PAUSE / ESCALATION / MISSED CALLS ENDPOINTS
@@ -6009,6 +6045,28 @@ async def api_pause_conversation(request: Request):
         ai_paused_conversations.setdefault(rid, {})[phone] = (now_paris() + timedelta(minutes=minutes)).isoformat()
     else:
         ai_paused_conversations.get(rid, {}).pop(phone, None)
+    return {"status": "ok"}
+
+@app.post("/api/conversations/send")
+async def api_send_manual_message(request: Request):
+    """Send a manual WhatsApp message from the restaurateur to a client."""
+    auth = get_auth(request)
+    if not auth:
+        return Response(status_code=401)
+    rid = auth["restaurant_id"]
+    data = await request.json()
+    phone = data.get("phone", "")
+    message = sanitize_input(data.get("message", ""), 2000)
+    if not phone or not message:
+        return JSONResponse(status_code=400, content={"error": "Telephone et message requis"})
+    rest = restaurants_cache.get(rid)
+    if not rest or not rest.get("whatsapp_phone_number_id") or not rest.get("whatsapp_access_token"):
+        return JSONResponse(status_code=400, content={"error": "WhatsApp non configure"})
+    # Send via WhatsApp
+    await send_whatsapp_message(rest["whatsapp_phone_number_id"], rest["whatsapp_access_token"], phone, message)
+    # Save in conversation history with human flag
+    save_message(rid, phone, "assistant", message, sender_type="human")
+    bump_version(rid)
     return {"status": "ok"}
 
 @app.get("/api/escalations")

@@ -162,6 +162,10 @@ export default function Dashboard() {
   // Conversation channel filter
   const [convChannel, setConvChannel] = useState('all');
 
+  // Manual reply
+  const [convReplyText, setConvReplyText] = useState('');
+  const [convPaused, setConvPaused] = useState({});  // phone -> boolean
+
   // Campaigns
   const [campaignList, setCampaignList] = useState([]);
   const [campaignMode, setCampaignMode] = useState('list'); // list, create
@@ -581,6 +585,29 @@ export default function Dashboard() {
       await apiFetch('/api/waitlist/remove', { method: 'POST', body: JSON.stringify({ id }) });
       await fetchData();
       showToast('Retire de la liste');
+    } catch { showToast('Erreur'); }
+  }
+
+  async function sendManualMessage(phone) {
+    if (!convReplyText.trim()) return;
+    try {
+        await apiFetch('/api/conversations/send', {
+            method: 'POST',
+            body: JSON.stringify({ phone, message: convReplyText.trim() })
+        });
+        setConvReplyText('');
+        await fetchData();
+    } catch { showToast('Erreur d\'envoi'); }
+  }
+
+  async function toggleConvPause(phone, pause) {
+    try {
+        await apiFetch('/api/conversation/pause', {
+            method: 'POST',
+            body: JSON.stringify({ phone, paused: pause, minutes: 240 })
+        });
+        setConvPaused(prev => ({ ...prev, [phone]: pause }));
+        showToast(pause ? 'IA en pause — vous gerez cette conversation' : 'IA reactivee');
     } catch { showToast('Erreur'); }
   }
 
@@ -1857,10 +1884,41 @@ export default function Dashboard() {
                             </div>
                             {(activeConv.messages || []).map((msg, i) => (
                                 <div key={i} className={'bubble ' + (msg.role === 'user' || msg.role === 'client' ? 'bubble-user' : 'bubble-bot')}>
+                                    {msg.role !== 'user' && msg.role !== 'client' && (
+                                        <div style={{ fontSize: 8, fontWeight: 700, color: msg.sender_type === 'human' ? 'var(--ac)' : 'var(--tm)', marginBottom: 2 }}>
+                                            {msg.sender_type === 'human' ? 'Manuel' : 'IA'}
+                                        </div>
+                                    )}
                                     {msg.content || msg.text}
                                     {msg.time && <div style={{ fontSize: 9, opacity: 0.6, marginTop: 4 }}>{msg.time}</div>}
                                 </div>
                             ))}
+                            {/* Reply controls */}
+                            <div style={{ borderTop: '1px solid var(--bl)', padding: '12px 0 0', marginTop: 'auto' }}>
+                                {convPaused[selectedConv] ? (
+                                    <>
+                                        <div style={{ fontSize: 11, color: 'var(--ac)', fontWeight: 600, marginBottom: 8, display: 'flex', alignItems: 'center', gap: 6 }}>
+                                            <span style={{ width: 8, height: 8, borderRadius: 4, background: 'var(--ac)' }} />
+                                            Vous gerez cette conversation
+                                            <button style={{ marginLeft: 'auto', fontSize: 10, color: 'var(--tm)', background: 'none', border: '1px solid var(--b)', borderRadius: 6, padding: '3px 8px', cursor: 'pointer', fontFamily: 'var(--f)' }}
+                                                onClick={() => toggleConvPause(selectedConv, false)}>Reactiver l&apos;IA</button>
+                                        </div>
+                                        <div style={{ display: 'flex', gap: 8 }}>
+                                            <input className="finp" style={{ flex: 1, marginBottom: 0, fontSize: 13 }}
+                                                placeholder="Ecrire un message..."
+                                                value={convReplyText} onChange={e => setConvReplyText(e.target.value)}
+                                                onKeyDown={e => e.key === 'Enter' && sendManualMessage(selectedConv)} />
+                                            <button className="ba" onClick={() => sendManualMessage(selectedConv)}>Envoyer</button>
+                                        </div>
+                                    </>
+                                ) : (
+                                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                                        <div style={{ fontSize: 11, color: 'var(--tm)' }}>L&apos;IA gere cette conversation</div>
+                                        <button className="ba" style={{ fontSize: 11, padding: '6px 12px', background: 'var(--bg)', color: 'var(--ac)', border: '1px solid var(--ac)' }}
+                                            onClick={() => toggleConvPause(selectedConv, true)}>Reprendre la main</button>
+                                    </div>
+                                )}
+                            </div>
                         </>
                     ) : (
                         <div style={{ textAlign: 'center', color: 'var(--tm)', fontSize: 13, marginTop: 60 }}>
@@ -2394,6 +2452,37 @@ export default function Dashboard() {
             </div>
             <div className={'tog' + (cfg._reminders_enabled ? ' on' : '')} onClick={toggleReminders}>
               <div className="togd" />
+            </div>
+          </div>
+          <div className="cfr">
+            <div>
+              <div className="cfl">Agent IA WhatsApp</div>
+              <div className="cfd">L&apos;IA repond automatiquement aux messages clients</div>
+            </div>
+            <div className={'tog' + (state.restaurantConfig.ai_enabled !== false ? ' on' : '')}
+              onClick={async () => {
+                const enabled = state.restaurantConfig.ai_enabled === false;
+                await apiFetch('/api/toggle-ai', { method: 'POST', body: JSON.stringify({ enabled }) });
+                dispatch({ type: 'SET_CONFIG', payload: { ai_enabled: enabled } });
+                await fetchData();
+                showToast(enabled ? 'IA activee' : 'IA desactivee');
+              }}>
+              <div className="togd" />
+            </div>
+          </div>
+          <div className="cfr">
+            <div>
+              <div className="cfl">Pause temporaire IA</div>
+              <div className="cfd">Mettre l&apos;IA en pause pendant le service</div>
+            </div>
+            <div style={{ display: 'flex', gap: 6 }}>
+              {[30, 60, 120].map(m => (
+                <button key={m} className="ba" style={{ fontSize: 10, padding: '4px 8px', background: 'var(--bg)', color: 'var(--ts)', border: '1px solid var(--b)' }}
+                  onClick={async () => {
+                    await apiFetch('/api/pause-ai', { method: 'POST', body: JSON.stringify({ minutes: m }) });
+                    showToast('IA en pause ' + m + ' min');
+                  }}>{m} min</button>
+              ))}
             </div>
           </div>
           <div className="cfr">
