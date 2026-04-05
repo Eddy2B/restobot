@@ -175,6 +175,8 @@ export default function Dashboard() {
   const [campNotSeen, setCampNotSeen] = useState('');
   const [campPreviewCount, setCampPreviewCount] = useState(null);
 
+  const [usageData, setUsageData] = useState(null);
+
   // Floor plan wizard
   const [wizardOpen, setWizardOpen] = useState(false);
   const [wizStep, setWizStep] = useState(0);
@@ -227,6 +229,7 @@ export default function Dashboard() {
           apiFetch('/api/subscription').then(r => r.ok ? r.json() : null).then(sub => {
               if (sub) setSubscription(sub);
           }).catch(() => {});
+          apiFetch('/api/usage').then(r => r.ok ? r.json() : null).then(u => { if (u) setUsageData(u); }).catch(() => {});
         });
       })
       .catch(() => {
@@ -759,6 +762,7 @@ export default function Dashboard() {
         .then(d => { if (d) { setStatsHistory(d.history || []); setStatsPeriod(d.period || null); } })
         .catch(() => {});
     }
+    if (page === 'usage') apiFetch('/api/usage').then(r => r.ok ? r.json() : null).then(u => { if (u) setUsageData(u); }).catch(() => {});
     if (page === 'campaigns') loadCampaigns();
   }, [page, statsRange]);
 
@@ -804,6 +808,24 @@ export default function Dashboard() {
 
     return (
       <div>
+        {usageData && (
+          <div className="card" style={{ marginBottom: 14, padding: 16 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+              <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--tm)' }}>UTILISATION — {usageData.month}</div>
+              <button style={{ fontSize: 11, color: 'var(--ac)', background: 'none', border: 'none', cursor: 'pointer', fontFamily: 'var(--f)', fontWeight: 600 }}
+                onClick={() => setPage('usage')}>Voir le detail</button>
+            </div>
+            <div style={{ height: 8, background: 'var(--bl)', borderRadius: 4, overflow: 'hidden', marginBottom: 6 }}>
+              <div style={{ height: '100%', borderRadius: 4, width: Math.min(usageData.usage_percent, 100) + '%',
+                background: usageData.usage_percent > 100 ? '#EF4444' : usageData.usage_percent > 80 ? '#F59E0B' : 'var(--acg)',
+                transition: 'width .3s' }} />
+            </div>
+            <div style={{ fontSize: 12, color: 'var(--ts)' }}>
+              {usageData.messages_sent} / {usageData.messages_included} messages IA ({usageData.usage_percent}%)
+              {usageData.messages_overage > 0 && <span style={{ color: '#EF4444', fontWeight: 600 }}> — {usageData.messages_overage} en depassement ({usageData.overage_cost}&#8364;)</span>}
+            </div>
+          </div>
+        )}
         {blocks.daily && (
           <div className="db">
             <div className="db-top">
@@ -2659,6 +2681,64 @@ export default function Dashboard() {
     );
   }
 
+  function renderUsage() {
+    if (!usageData) return <div style={{ padding: 40, textAlign: 'center', color: 'var(--tm)' }}>Chargement...</div>;
+    const u = usageData;
+    const barColor = u.usage_percent > 100 ? '#EF4444' : u.usage_percent > 80 ? '#F59E0B' : 'var(--ac)';
+
+    return (
+        <div>
+            <div className="card" style={{ padding: 20, marginBottom: 14 }}>
+                <div className="card-t" style={{ marginBottom: 4 }}>Utilisation — {u.month}</div>
+                <div className="card-s">Plan {u.plan === 'founder' ? 'Fondateur' : u.plan === 'standard' ? 'Standard' : 'Essai'} — {u.messages_included} messages inclus/mois</div>
+                <div style={{ height: 12, background: 'var(--bl)', borderRadius: 6, overflow: 'hidden', margin: '16px 0 8px' }}>
+                    <div style={{ height: '100%', borderRadius: 6, width: Math.min(u.usage_percent, 100) + '%', background: barColor, transition: 'width .3s' }} />
+                </div>
+                <div className="sg" style={{ marginTop: 16 }}>
+                    <div className="sc"><div className="sl">Envoyes</div><div className="sv" style={{ color: barColor }}>{u.messages_sent}</div></div>
+                    <div className="sc"><div className="sl">Restants</div><div className="sv" style={{ color: 'var(--ok)' }}>{u.messages_remaining}</div></div>
+                    <div className="sc"><div className="sl">Depassement</div><div className="sv" style={{ color: u.messages_overage > 0 ? '#EF4444' : 'var(--tm)' }}>{u.messages_overage}</div></div>
+                    <div className="sc"><div className="sl">Cout surplus</div><div className="sv" style={{ color: u.overage_cost > 0 ? '#EF4444' : 'var(--tm)' }}>{u.overage_cost}&#8364;</div></div>
+                </div>
+            </div>
+
+            <div className="card" style={{ padding: 20, marginBottom: 14 }}>
+                <div className="card-t" style={{ marginBottom: 14 }}>Detail par type</div>
+                {[
+                    { label: 'Appels manques', key: 'missed_call', icon: 'tel' },
+                    { label: 'Rappels reservation', key: 'reminder', icon: 'cal' },
+                    { label: 'Demandes avis Google', key: 'review', icon: 'star' },
+                    { label: 'Autres', key: 'other', icon: 'msg' },
+                ].map(t => (
+                    <div key={t.key} className="cfr">
+                        <div className="cfl">{t.label}</div>
+                        <div style={{ fontSize: 14, fontWeight: 700 }}>{u.detail?.[t.key] || 0}</div>
+                    </div>
+                ))}
+            </div>
+
+            {u.history?.length > 0 && (
+                <div className="card" style={{ padding: 20 }}>
+                    <div className="card-t" style={{ marginBottom: 14 }}>Historique</div>
+                    {u.history.map(h => (
+                        <div key={h.month} className="cfr">
+                            <div><div className="cfl">{h.month}</div><div className="cfd">{h.messages_sent} messages</div></div>
+                            <div style={{ textAlign: 'right' }}>
+                                {h.overage > 0 ? <span style={{ color: '#EF4444', fontSize: 12, fontWeight: 600 }}>{h.overage} depassement ({h.cost}&#8364;)</span>
+                                    : <span style={{ color: 'var(--ok)', fontSize: 12 }}>Inclus</span>}
+                            </div>
+                        </div>
+                    ))}
+                </div>
+            )}
+
+            <div style={{ marginTop: 14, padding: 14, background: 'var(--bl)', borderRadius: 10, fontSize: 12, color: 'var(--tm)', lineHeight: 1.6 }}>
+                Les messages comptes sont les templates WhatsApp envoyes par GuestScale : appels manques, rappels de reservation, demandes d&apos;avis. <strong style={{ color: 'var(--t)' }}>Les reponses aux messages de vos clients sont gratuites et illimitees.</strong>
+            </div>
+        </div>
+    );
+  }
+
   function renderCampaigns() {
     if (campaignMode === 'create') return renderCampaignCreate();
 
@@ -3067,6 +3147,7 @@ export default function Dashboard() {
       case 'waitlist': return renderWaitlist();
       case 'campaigns': return renderCampaigns();
       case 'config': return renderConfig();
+      case 'usage': return renderUsage();
       case 'stats': return renderStats();
       case 'account': return renderAccount();
       default: return renderOverview();
@@ -3100,6 +3181,7 @@ export default function Dashboard() {
       label: 'PARAMETRES',
       items: [
         { id: 'config', icon: '\u2699', label: 'Configuration' },
+        { id: 'usage', icon: '\u25A3', label: 'Utilisation' },
         { id: 'stats', icon: '\u26AB', label: 'Statistiques' },
         { id: 'account', icon: '\u25CB', label: 'Mon compte' },
       ]
@@ -3120,6 +3202,7 @@ export default function Dashboard() {
     { id: 'campaigns', icon: '\u2709', label: 'Campagnes' },
     { id: 'waitlist', icon: '\u23F1', label: 'Attente' },
     { id: 'config', icon: '\u2699', label: 'Config' },
+    { id: 'usage', icon: '\u25A3', label: 'Utilisation' },
     { id: 'stats', icon: '\u26AB', label: 'Stats' },
     { id: 'account', icon: '\u25CB', label: 'Compte' },
   ];

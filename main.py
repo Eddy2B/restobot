@@ -194,10 +194,31 @@ daily_stats_history = {}    # restaurant_id: [snapshots]
 ai_paused_conversations = {}  # rid -> {phone: pause_until_iso}
 escalations = {}            # rid -> [escalation dicts]
 missed_call_tracker = {}    # rid -> {phone: {wa_sent_at, call_sent_at, date}}
+usage_counters = {}  # rid -> {"2026-04": {"total": 0, "missed_call": 0, "reminder": 0, "review": 0, "other": 0}}
 
 # Waitlist per restaurant
 # waitlist[rid] = [{"id": "W1", "phone": ..., "name": ..., "covers": 2, "service": "soir", "date": "2026-03-26", "added_at": ..., "status": "waiting"|"notified"|"accepted"|"declined"|"expired", "notified_at": None, "position": 1}]
 waitlist = {}               # restaurant_id: [entries]
+
+PLAN_LIMITS = {"founder": 500, "standard": 1500, "trial": 100}
+PLAN_RATES = {"founder": 0.08, "standard": 0.06, "trial": 0.0}
+
+async def increment_message_count(rid: str, msg_type: str = "other"):
+    month = now_paris().strftime("%Y-%m")
+    counters = usage_counters.setdefault(rid, {})
+    if month not in counters:
+        counters[month] = {"total": 0, "missed_call": 0, "reminder": 0, "review": 0, "other": 0}
+    counters[month]["total"] += 1
+    counters[month][msg_type] = counters[month].get(msg_type, 0) + 1
+    # Check thresholds for alerts
+    rest = restaurants_cache.get(rid, {})
+    plan = rest.get("settings", {}).get("subscription_plan", "trial")
+    limit = PLAN_LIMITS.get(plan, 500)
+    total = counters[month]["total"]
+    if total == int(limit * 0.8):
+        logger.info(f"Usage alert 80%: {rid[:8]}... {total}/{limit}")
+    elif total == limit:
+        logger.info(f"Usage alert 100%: {rid[:8]}... {total}/{limit}")
 
 # Data version counter per restaurant
 data_versions = {}          # restaurant_id: int
@@ -1015,6 +1036,7 @@ async def send_review_request(rid: str, customer_phone: str, customer_name: str)
     )
     await db_mark_review_sent(rid, customer_phone)
     logger.info(f"Review request sent to {customer_phone}")
+    await increment_message_count(rid, "review")
 
 
 async def handle_review_response(rid: str, customer_phone: str, message_text: str) -> str | None:
@@ -1898,6 +1920,7 @@ async def send_booking_reminders():
                 b["reminder_sent"] = True
                 await db_save_booking(rid, b)
                 logger.info(f"Reminder sent: {name} ({phone}) for {bdate} {btime} @ {rest_name}")
+                await increment_message_count(rid, "reminder")
             except Exception as e:
                 logger.error(f"Reminder send error for {name}: {e}")
 
@@ -5928,6 +5951,7 @@ async def handle_missed_call(caller_phone: str, restaurant_phone: str):
 
         bump_version(rid)
         logger.info(f"Missed call handled: {caller_phone} -> {restaurant_name}")
+        await increment_message_count(rid, "missed_call")
 
 
 @app.post("/twilio/voice")
@@ -7567,6 +7591,8 @@ async def admin_list_restaurants(request: Request):
             "has_menu": bool(rest.get("settings", {}).get("menu")),
             "has_address": bool(rest.get("settings", {}).get("address")),
             "waitlist_count": len([w for w in waitlist.get(rid, []) if w.get("status") == "waiting"]),
+            "messages_this_month": usage_counters.get(rid, {}).get(today_paris().strftime("%Y-%m"), {}).get("total", 0),
+            "plan_limit": PLAN_LIMITS.get(rest.get("settings", {}).get("subscription_plan", "trial"), 500),
         })
     result.sort(key=lambda r: r.get("created_at") or "", reverse=True)
     return {"restaurants": result, "total": len(result)}
@@ -7695,6 +7721,7 @@ async def admin_global_stats(request: Request):
         "bookings_timeline": bookings_timeline,
         "messages_timeline": messages_timeline,
         "restaurant_performance": restaurant_performance,
+        "total_messages_month": sum(c.get(today_paris().strftime("%Y-%m"), {}).get("total", 0) for c in usage_counters.values()),
     }
 
 
@@ -8925,6 +8952,39 @@ async def api_subscription(request: Request):
         "plan": plan,
         "trial_days_left": trial_days_left,
         "trial_expired": trial_expired if status == "trial" else False,
+    }
+
+@app.get("/api/usage")
+async def api_usage(request: Request):
+    auth = get_auth(request)
+    if not auth:
+        return Response(status_code=401)
+    rid = auth["restaurant_id"]
+    month = now_paris().strftime("%Y-%m")
+    rest = restaurants_cache.get(rid, {})
+    plan = rest.get("settings", {}).get("subscription_plan", "trial")
+    limit = PLAN_LIMITS.get(plan, 500)
+    rate = PLAN_RATES.get(plan, 0.08)
+    counters = usage_counters.get(rid, {})
+    current = counters.get(month, {"total": 0, "missed_call": 0, "reminder": 0, "review": 0, "other": 0})
+    total = current["total"]
+    overage = max(0, total - limit)
+    # History
+    history = []
+    for m, c in sorted(counters.items(), reverse=True):
+        if m != month:
+            m_limit = limit
+            m_over = max(0, c["total"] - m_limit)
+            history.append({"month": m, "messages_sent": c["total"], "overage": m_over, "cost": round(m_over * rate, 2)})
+    return {
+        "month": month, "plan": plan,
+        "messages_sent": total, "messages_included": limit,
+        "messages_remaining": max(0, limit - total),
+        "messages_overage": overage, "overage_rate": rate,
+        "overage_cost": round(overage * rate, 2),
+        "usage_percent": round(total / max(limit, 1) * 100, 1),
+        "detail": {"missed_call": current.get("missed_call", 0), "reminder": current.get("reminder", 0), "review": current.get("review", 0), "other": current.get("other", 0)},
+        "history": history[:6],
     }
 
 @app.post("/api/stripe/checkout")
