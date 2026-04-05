@@ -6,6 +6,14 @@ DNS EMAIL CONFIG REQUISE (dans Cloudflare DNS) :
 SPF : TXT guestscale.com -> "v=spf1 include:spf.brevo.com ~all"
 DKIM : TXT brevo._domainkey.guestscale.com -> (cle fournie par Brevo)
 DMARC : TXT _dmarc.guestscale.com -> "v=DMARC1; p=quarantine; rua=mailto:contact@guestscale.com"
+
+PRICING AVRIL 2026 :
+Fondateur : 99 EUR/mois, 500 msgs inclus, 0.08 EUR depassement
+Standard : 149 EUR/mois, 1500 msgs inclus, 0.06 EUR depassement
+Option vocal : +79 EUR/mois, 100 min, 0.50 EUR/min
+Option broadcast WhatsApp : 0.15 EUR/msg prepaye
+Option multi-etablissements : +49 EUR/mois/resto
+Option white label : +99 EUR/mois
 """
 
 import os
