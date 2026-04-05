@@ -157,6 +157,8 @@ export default function Dashboard() {
   const [obDesc, setObDesc] = useState('');
   const [obTone, setObTone] = useState('');
 
+  const [subscription, setSubscription] = useState(null);
+
   // Conversation channel filter
   const [convChannel, setConvChannel] = useState('all');
 
@@ -217,6 +219,9 @@ export default function Dashboard() {
             if (cfg && !cfg.name) {
               setOnboarding(true);
             }
+          }).catch(() => {});
+          apiFetch('/api/subscription').then(r => r.ok ? r.json() : null).then(sub => {
+              if (sub) setSubscription(sub);
           }).catch(() => {});
         });
       })
@@ -2833,6 +2838,75 @@ export default function Dashboard() {
           </div>
         </div>
 
+        {/* Subscription */}
+        <div className="card" style={{ marginBottom: 14 }}>
+          <div className="card-h">
+            <div className="card-t">Abonnement</div>
+          </div>
+          <div style={{ padding: 18 }}>
+            {!subscription ? (
+                <div style={{ color: 'var(--tm)', fontSize: 13 }}>Chargement...</div>
+            ) : subscription.status === 'active' ? (
+              <div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
+                  <span className="badge" style={{ background: '#E6FAF8', color: '#059669' }}>Actif</span>
+                  <span style={{ fontSize: 14, fontWeight: 700 }}>Plan {subscription.plan === 'founder' ? 'Fondateur — 99' : 'Standard — 149'}&#8364;/mois</span>
+                </div>
+                <button className="ba" style={{ background: 'var(--bg)', color: 'var(--ts)', border: '1px solid var(--b)' }}
+                  onClick={async () => {
+                    const r = await apiFetch('/api/stripe/portal', { method: 'POST', body: '{}' });
+                    const d = await r.json();
+                    if (d.portal_url) window.location.href = d.portal_url;
+                  }}>Gerer mon abonnement</button>
+              </div>
+            ) : subscription.status === 'past_due' ? (
+              <div>
+                <div style={{ padding: 12, background: '#FEF3C7', borderRadius: 8, marginBottom: 12, fontSize: 13, color: '#92400E' }}>
+                  Paiement en echec. Mettez a jour votre moyen de paiement.
+                </div>
+                <button className="ba" onClick={async () => {
+                  const r = await apiFetch('/api/stripe/portal', { method: 'POST', body: '{}' });
+                  const d = await r.json();
+                  if (d.portal_url) window.location.href = d.portal_url;
+                }}>Mettre a jour le paiement</button>
+              </div>
+            ) : subscription.trial_expired ? (
+              <div>
+                <div style={{ padding: 12, background: '#FEF3C7', borderRadius: 8, marginBottom: 12, fontSize: 13, color: '#92400E', fontWeight: 600 }}>
+                  Votre essai gratuit est termine. Choisissez un plan pour continuer.
+                </div>
+                <div style={{ display: 'flex', gap: 10 }}>
+                  <button className="ba" onClick={async () => {
+                    const r = await apiFetch('/api/stripe/checkout', { method: 'POST', body: JSON.stringify({ plan: 'founder' }) });
+                    const d = await r.json();
+                    if (d.checkout_url) window.location.href = d.checkout_url;
+                  }}>Fondateur — 99&#8364;/mois</button>
+                  <button className="ba" style={{ background: 'var(--bg)', color: 'var(--ts)', border: '1px solid var(--b)' }}
+                    onClick={async () => {
+                      const r = await apiFetch('/api/stripe/checkout', { method: 'POST', body: JSON.stringify({ plan: 'standard' }) });
+                      const d = await r.json();
+                      if (d.checkout_url) window.location.href = d.checkout_url;
+                    }}>Standard — 149&#8364;/mois</button>
+                </div>
+              </div>
+            ) : (
+              <div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+                  <span className="badge" style={{ background: '#FFFBEB', color: '#D97706' }}>Essai gratuit</span>
+                  <span style={{ fontSize: 13, fontWeight: 600 }}>{subscription.trial_days_left} jours restants</span>
+                </div>
+                <div style={{ display: 'flex', gap: 10, marginTop: 12 }}>
+                  <button className="ba" onClick={async () => {
+                    const r = await apiFetch('/api/stripe/checkout', { method: 'POST', body: JSON.stringify({ plan: 'founder' }) });
+                    const d = await r.json();
+                    if (d.checkout_url) window.location.href = d.checkout_url;
+                  }}>Passer au plan Fondateur — 99&#8364;/mois</button>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+
         <div className="card" style={{ marginBottom: 14 }}>
           <div className="card-h">
             <div className="card-t">Changer le mot de passe</div>
@@ -3285,6 +3359,13 @@ export default function Dashboard() {
             <div style={{ fontSize: 13, color: 'var(--tm)', fontWeight: 600 }}>{fmtNow()}</div>
           </div>
         </div>
+            {subscription?.trial_expired && subscription?.status === 'trial' && (
+              <div style={{ padding: '10px 20px', background: '#FEF3C7', borderBottom: '1px solid #FCD34D', fontSize: 13, color: '#92400E', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                <span>Votre essai gratuit est termine. Choisissez un plan pour continuer a utiliser GuestScale.</span>
+                <button className="ba" style={{ fontSize: 11, padding: '6px 14px', flexShrink: 0 }}
+                  onClick={() => setPage('account')}>Choisir un plan</button>
+              </div>
+            )}
         <div className="content">
           {renderPage()}
         </div>

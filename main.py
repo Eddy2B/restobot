@@ -69,6 +69,30 @@ APP_DOMAIN = os.getenv("APP_DOMAIN", "app.guestscale.com")
 BREVO_API_KEY = os.getenv("BREVO_API_KEY", "")
 BREVO_LIST_ID = int(os.getenv("BREVO_LIST_ID", "6"))
 
+# Stripe
+import stripe as stripe_mod
+stripe_mod.api_key = os.getenv("STRIPE_SECRET_KEY", "")
+STRIPE_WEBHOOK_SECRET = os.getenv("STRIPE_WEBHOOK_SECRET", "")
+STRIPE_PRICE_FOUNDER = os.getenv("STRIPE_PRICE_FOUNDER", "")
+STRIPE_PRICE_STANDARD = os.getenv("STRIPE_PRICE_STANDARD", "")
+
+def get_restaurant_stripe_config(rid: str, key: str):
+    rest = restaurants_cache.get(rid)
+    if not rest:
+        return None
+    return rest.get("settings", {}).get(key)
+
+def set_restaurant_stripe_config(rid: str, key: str, value):
+    rest = restaurants_cache.get(rid)
+    if rest:
+        rest.setdefault("settings", {})[key] = value
+
+def find_restaurant_by_stripe_customer(customer_id: str):
+    for rid, rest in restaurants_cache.items():
+        if rest.get("settings", {}).get("stripe_customer_id") == customer_id:
+            return rid
+    return None
+
 # Twilio (missed call detection)
 TWILIO_ACCOUNT_SID = os.getenv("TWILIO_ACCOUNT_SID", "")
 TWILIO_AUTH_TOKEN = os.getenv("TWILIO_AUTH_TOKEN", "")
@@ -8811,6 +8835,124 @@ document.addEventListener('click',function(e){
 </body>
 </html>"""
 
+
+# ==============================================================
+# STRIPE BILLING
+# ==============================================================
+
+@app.get("/api/subscription")
+async def api_subscription(request: Request):
+    auth = get_auth(request)
+    if not auth:
+        return Response(status_code=401)
+    rid = auth["restaurant_id"]
+    rest = restaurants_cache.get(rid, {})
+    settings = rest.get("settings", {})
+    status = settings.get("subscription_status", "trial")
+    plan = settings.get("subscription_plan", "founder")
+    trial_ends = rest.get("trial_ends_at", "")
+    trial_days_left = 30
+    trial_expired = False
+    if trial_ends:
+        try:
+            from datetime import datetime as dt_cls
+            ends = dt_cls.fromisoformat(trial_ends.replace('Z', '+00:00')) if isinstance(trial_ends, str) else trial_ends
+            diff = (ends.replace(tzinfo=None) - datetime.utcnow()).days
+            trial_days_left = max(0, diff)
+            trial_expired = diff < 0
+        except Exception:
+            pass
+    return {
+        "status": status,
+        "plan": plan,
+        "trial_days_left": trial_days_left,
+        "trial_expired": trial_expired if status == "trial" else False,
+    }
+
+@app.post("/api/stripe/checkout")
+async def api_stripe_checkout(request: Request):
+    auth = get_auth(request)
+    if not auth:
+        return Response(status_code=401)
+    if not stripe_mod.api_key:
+        return JSONResponse(status_code=503, content={"error": "Stripe not configured"})
+    rid = auth["restaurant_id"]
+    data = await request.json()
+    plan = data.get("plan", "founder")
+    price_id = STRIPE_PRICE_FOUNDER if plan == "founder" else STRIPE_PRICE_STANDARD
+    if not price_id:
+        return JSONResponse(status_code=400, content={"error": "Plan non configure"})
+    email = auth.get("email", "")
+    customer_id = get_restaurant_stripe_config(rid, "stripe_customer_id")
+    if not customer_id:
+        customer = stripe_mod.Customer.create(email=email, metadata={"restaurant_id": rid})
+        customer_id = customer.id
+        set_restaurant_stripe_config(rid, "stripe_customer_id", customer_id)
+    session = stripe_mod.checkout.Session.create(
+        customer=customer_id,
+        payment_method_types=["card"],
+        line_items=[{"price": price_id, "quantity": 1}],
+        mode="subscription",
+        success_url=f"https://{APP_DOMAIN}/dashboard?p=account&subscription=success",
+        cancel_url=f"https://{APP_DOMAIN}/dashboard?p=account&subscription=cancelled",
+        metadata={"restaurant_id": rid, "plan": plan},
+        allow_promotion_codes=True,
+    )
+    return {"checkout_url": session.url}
+
+@app.post("/api/stripe/portal")
+async def api_stripe_portal(request: Request):
+    auth = get_auth(request)
+    if not auth:
+        return Response(status_code=401)
+    rid = auth["restaurant_id"]
+    customer_id = get_restaurant_stripe_config(rid, "stripe_customer_id")
+    if not customer_id:
+        return JSONResponse(status_code=400, content={"error": "Pas d'abonnement"})
+    session = stripe_mod.billing_portal.Session.create(
+        customer=customer_id,
+        return_url=f"https://{APP_DOMAIN}/dashboard?p=account",
+    )
+    return {"portal_url": session.url}
+
+@app.post("/api/stripe/webhook")
+async def api_stripe_webhook(request: Request):
+    payload = await request.body()
+    sig = request.headers.get("stripe-signature", "")
+    try:
+        event = stripe_mod.Webhook.construct_event(payload, sig, STRIPE_WEBHOOK_SECRET)
+    except Exception:
+        return Response(status_code=400)
+    etype = event.get("type", "")
+    obj = event.get("data", {}).get("object", {})
+    if etype == "checkout.session.completed":
+        rid = obj.get("metadata", {}).get("restaurant_id")
+        plan = obj.get("metadata", {}).get("plan", "founder")
+        sub_id = obj.get("subscription")
+        if rid:
+            set_restaurant_stripe_config(rid, "stripe_subscription_id", sub_id)
+            set_restaurant_stripe_config(rid, "subscription_plan", plan)
+            set_restaurant_stripe_config(rid, "subscription_status", "active")
+            rest = restaurants_cache.get(rid)
+            if rest:
+                rest["status"] = "active"
+                await db_save_restaurant(rid, rest)
+            bump_version(rid)
+            logger.info(f"Stripe: subscription activated for {rid[:8]}... plan={plan}")
+    elif etype in ("customer.subscription.updated", "customer.subscription.deleted"):
+        cid = obj.get("customer")
+        rid = find_restaurant_by_stripe_customer(cid)
+        if rid:
+            status = "canceled" if etype.endswith("deleted") else obj.get("status", "active")
+            set_restaurant_stripe_config(rid, "subscription_status", status)
+            bump_version(rid)
+    elif etype == "invoice.payment_failed":
+        cid = obj.get("customer")
+        rid = find_restaurant_by_stripe_customer(cid)
+        if rid:
+            set_restaurant_stripe_config(rid, "subscription_status", "past_due")
+            bump_version(rid)
+    return {"status": "ok"}
 
 # ==============================================================
 # HEALTH CHECK
