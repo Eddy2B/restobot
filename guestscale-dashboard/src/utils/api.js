@@ -18,6 +18,7 @@ export function clearToken() {
 
 export function apiFetch(url, opts = {}) {
   opts.headers = opts.headers || {};
+  opts.credentials = 'include';  // Send httpOnly cookies
   const t = getToken();
   if (t) opts.headers['Authorization'] = 'Bearer ' + t;
   if (!opts.headers['Content-Type'] && opts.body) opts.headers['Content-Type'] = 'application/json';

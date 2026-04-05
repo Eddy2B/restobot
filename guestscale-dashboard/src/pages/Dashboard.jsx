@@ -2226,6 +2226,20 @@ export default function Dashboard() {
             </div>
           </div>
         )}
+
+        <button style={{
+          marginTop: 14, padding: '8px 14px', borderRadius: 8, border: '1px solid var(--da)',
+          background: 'transparent', color: 'var(--da)', fontSize: 11, fontWeight: 600,
+          cursor: 'pointer', fontFamily: 'var(--f)', opacity: 0.7,
+        }} onClick={async () => {
+          if (!window.confirm('Supprimer toutes les donnees de ce contact (RGPD) ? Reservations, conversations et notes seront supprimees.')) return;
+          try {
+            await apiFetch('/api/contacts/' + encodeURIComponent(c.phone) + '/gdpr', { method: 'DELETE' });
+            openContact(null);
+            await fetchData();
+            showToast('Contact supprime (RGPD)');
+          } catch { showToast('Erreur'); }
+        }}>Supprimer ce contact (RGPD)</button>
       </div>
     );
   }
@@ -2846,6 +2860,31 @@ export default function Dashboard() {
 
         <button className="ba" style={{ background: '#EF4444', width: '100%', padding: 14, fontSize: 14 }}
           onClick={doLogout}>Se deconnecter</button>
+
+        <div className="cfs" style={{ marginTop: 24 }}>
+          <div className="cft">Donnees personnelles</div>
+          <div className="cfsb">Conformement au RGPD, vous pouvez exporter ou supprimer vos donnees.</div>
+          <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+            <button className="ba" style={{ background: 'var(--bg)', color: 'var(--ts)', border: '1px solid var(--b)' }}
+              onClick={() => {
+                apiFetch('/api/contacts/export').then(r => r.blob()).then(b => { const a = document.createElement('a'); a.href = URL.createObjectURL(b); a.download = 'contacts.csv'; a.click(); });
+                apiFetch('/api/bookings/export').then(r => r.blob()).then(b => { const a = document.createElement('a'); a.href = URL.createObjectURL(b); a.download = 'reservations.csv'; a.click(); });
+              }}>Exporter mes donnees (CSV)</button>
+            <button style={{
+              padding: '10px 20px', borderRadius: 8, border: '1px solid var(--da)',
+              background: 'transparent', color: 'var(--da)', fontSize: 13, fontWeight: 700,
+              cursor: 'pointer', fontFamily: 'var(--f)',
+            }} onClick={async () => {
+              if (!window.confirm('Supprimer definitivement votre compte et toutes vos donnees ? Cette action est irreversible.')) return;
+              if (!window.confirm('Derniere confirmation : toutes les reservations, contacts, conversations et parametres seront supprimes.')) return;
+              try {
+                await apiFetch('/api/account/delete', { method: 'DELETE' });
+                clearToken();
+                window.location.href = 'https://guestscale.com';
+              } catch { showToast('Erreur lors de la suppression'); }
+            }}>Supprimer mon compte</button>
+          </div>
+        </div>
       </div>
     );
   }

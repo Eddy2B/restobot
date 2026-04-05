@@ -261,13 +261,13 @@ def jwt_decode(token: str) -> dict | None:
 
 
 def get_auth(request: Request) -> dict | None:
-    """Extract and verify JWT from Authorization header or query param."""
-    # Try Authorization header first
-    auth_header = request.headers.get("authorization", "")
-    if auth_header.startswith("Bearer "):
-        token = auth_header[7:]
-    else:
-        # Fallback to query param
+    """Extract and verify JWT from cookie, Authorization header, or query param."""
+    token = request.cookies.get("gs_token")
+    if not token:
+        auth_header = request.headers.get("authorization", "")
+        if auth_header.startswith("Bearer "):
+            token = auth_header[7:]
+    if not token:
         token = request.query_params.get("token", "")
     if not token:
         return None
@@ -5156,7 +5156,7 @@ app = FastAPI(
     redoc_url="/redoc" if SHOW_DOCS else None,
     openapi_url="/openapi.json" if SHOW_DOCS else None,
 )
-app.add_middleware(CORSMiddleware, allow_origins=["https://app.guestscale.com", "https://guestscale.com", "https://www.guestscale.com", "http://localhost:3000", "http://localhost:8000"], allow_methods=["*"], allow_headers=["*"])
+app.add_middleware(CORSMiddleware, allow_origins=["https://app.guestscale.com", "https://guestscale.com", "https://www.guestscale.com", "http://localhost:3000", "http://localhost:8000"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 
 from starlette.middleware.base import BaseHTTPMiddleware
 
@@ -5536,9 +5536,9 @@ async def api_login(request: Request):
                 "user_id": str(row["id"]), "restaurant_id": rid_str,
                 "email": row["email"], "role": row["role"],
             })
-            return {
+            response = JSONResponse(content={
                 "status": "ok",
-                "token": token,
+                "token": token,  # Keep for backwards compat
                 "user": {
                     "email": row["email"],
                     "first_name": row["first_name"] or "",
@@ -5550,7 +5550,12 @@ async def api_login(request: Request):
                     "role": row["role"],
                     "slug": row["slug"],
                 }
-            }
+            })
+            response.set_cookie(
+                key="gs_token", value=token, httponly=True, secure=True,
+                samesite="lax", max_age=86400 * 7, path="/"
+            )
+            return response
     except Exception as e:
         logger.error(f"Login error: {e}")
         return JSONResponse(status_code=500, content={"error": "Erreur serveur"})
@@ -5675,6 +5680,13 @@ async def api_reset_password(request: Request):
         return JSONResponse(status_code=500, content={"error": "Erreur serveur"})
 
 
+@app.post("/api/logout")
+async def api_logout():
+    response = JSONResponse(content={"status": "ok"})
+    response.delete_cookie("gs_token", path="/")
+    return response
+
+
 @app.get("/api/me")
 async def api_me(request: Request):
     auth = get_auth(request)
@@ -5719,6 +5731,64 @@ async def api_change_password(request: Request):
     except Exception as e:
         logger.error(f"Change password error: {e}")
         return JSONResponse(status_code=500, content={"error": "Erreur serveur"})
+
+
+@app.delete("/api/account/delete")
+async def api_delete_account(request: Request):
+    auth = get_auth(request)
+    if not auth:
+        return Response(status_code=401)
+    rid = auth["restaurant_id"]
+    user_id = auth.get("user_id", "")
+    try:
+        if db_pool:
+            async with db_pool.acquire() as conn:
+                await conn.execute("DELETE FROM mt_bookings WHERE restaurant_id = $1::uuid", rid)
+                await conn.execute("DELETE FROM mt_contacts WHERE restaurant_id = $1::uuid", rid)
+                await conn.execute("DELETE FROM mt_conversations WHERE restaurant_id = $1::uuid", rid)
+                await conn.execute("DELETE FROM mt_review_queue WHERE restaurant_id = $1::uuid", rid)
+                await conn.execute("DELETE FROM users WHERE restaurant_id = $1::uuid", rid)
+                await conn.execute("DELETE FROM restaurants WHERE id = $1::uuid", rid)
+        # Clear in-memory
+        for store in [bookings, contacts, conversations, floor_tables, table_slots, review_queue, stats, daily_stats_history, waitlist, data_versions, restaurant_status, table_statuses, table_groups, escalations, missed_call_tracker, campaigns_store]:
+            store.pop(rid, None)
+        restaurants_cache.pop(rid, None)
+        logger.info(f"Account deleted: restaurant {rid[:8]}... by user {user_id}")
+        response = JSONResponse(content={"status": "ok", "message": "Compte et donnees supprimes"})
+        response.delete_cookie("gs_token", path="/")
+        return response
+    except Exception as e:
+        logger.error(f"Account deletion error: {e}")
+        return JSONResponse(status_code=500, content={"error": "Erreur lors de la suppression"})
+
+
+@app.delete("/api/contacts/{phone}/gdpr")
+async def api_gdpr_delete_contact(request: Request, phone: str):
+    auth = get_auth(request)
+    if not auth:
+        return Response(status_code=401)
+    rid = auth["restaurant_id"]
+    # Remove contact
+    rid_contacts = contacts.get(rid, {})
+    rid_contacts.pop(phone, None)
+    # Remove bookings
+    rid_bookings = bookings.get(rid, [])
+    bookings[rid] = [b for b in rid_bookings if b.get("phone") != phone]
+    # Remove conversations
+    conv_key = f"{rid}:{phone}"
+    conversations.pop(conv_key, None)
+    # Save to DB
+    if db_pool:
+        try:
+            async with db_pool.acquire() as conn:
+                await conn.execute("DELETE FROM mt_contacts WHERE restaurant_id = $1::uuid AND data->>'phone' = $2", rid, phone)
+                await conn.execute("DELETE FROM mt_bookings WHERE restaurant_id = $1::uuid AND data->>'phone' = $2", rid, phone)
+                await conn.execute("DELETE FROM mt_conversations WHERE restaurant_id = $1::uuid AND phone = $2", rid, phone)
+        except Exception as e:
+            logger.error(f"GDPR deletion error: {e}")
+    bump_version(rid)
+    logger.info(f"GDPR deletion: contact {phone} from restaurant {rid[:8]}...")
+    return {"status": "ok", "message": "Donnees du contact supprimees"}
 
 
 # ==============================================================
