@@ -841,7 +841,7 @@ export default function Dashboard() {
                   </div>
                 )}
                 {!editingDaily && state.dailyMsg && (
-                  <div className="dme">Visible par l&apos;equipe et diffusable aux clients</div>
+                  <div className="dme">Visible par l&apos;équipe et diffusable aux clients</div>
                 )}
               </div>
             </div>
@@ -860,7 +860,7 @@ export default function Dashboard() {
             <div className="sc">
               <div className="sl">Messages</div>
               <div className="sv">{totalMessages}</div>
-              <div className="ss2">Total echanges</div>
+              <div className="ss2">Total échanges</div>
             </div>
             <div className="sc">
               <div className="sl">Reservations</div>
@@ -946,7 +946,7 @@ export default function Dashboard() {
                 ))}
                 {bookingsForDate.length === 0 && (
                   <div style={{ padding: 24, textAlign: 'center', color: 'var(--tm)', fontSize: 13 }}>
-                    Aucune reservation pour cette date
+                    Aucune réservation pour cette date
                   </div>
                 )}
               </div>
@@ -3119,7 +3119,7 @@ export default function Dashboard() {
               cursor: 'pointer', fontFamily: 'var(--f)',
             }} onClick={async () => {
               if (!window.confirm('Supprimer definitivement votre compte et toutes vos donnees ? Cette action est irreversible.')) return;
-              if (!window.confirm('Derniere confirmation : toutes les reservations, contacts, conversations et parametres seront supprimes.')) return;
+              if (!window.confirm('Dernière confirmation : toutes les réservations, contacts, conversations et paramètres seront supprimés.')) return;
               try {
                 await apiFetch('/api/account/delete', { method: 'DELETE' });
                 clearToken();

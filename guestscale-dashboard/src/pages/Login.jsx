@@ -111,7 +111,7 @@ export default function Login() {
             <button className="lbtn" type="submit">Se connecter</button>
             <div style={{ textAlign: 'center', marginTop: 12 }}>
               <a href="#" onClick={e => { e.preventDefault(); setForgotMode(true); setError(''); }}
-                style={{ fontSize: 12, color: '#6B7280', textDecoration: 'none' }}>Mot de passe oublie ?</a>
+                style={{ fontSize: 12, color: '#6B7280', textDecoration: 'none' }}>Mot de passe oublié ?</a>
             </div>
             <div style={{ textAlign: 'center', marginTop: 16 }}>
               <span style={{ fontSize: 12, color: '#6B7280' }}>Pas encore de compte ?</span>
