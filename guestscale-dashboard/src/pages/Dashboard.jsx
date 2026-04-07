@@ -2809,30 +2809,58 @@ export default function Dashboard() {
   function renderCampaigns() {
     if (campaignMode === 'create') return renderCampaignCreate();
 
+    function fmtCampDateLong(iso) {
+      if (!iso) return '';
+      try {
+        const d = new Date(iso);
+        const months = ['janv','févr','mars','avril','mai','juin','juil','août','sept','oct','nov','déc'];
+        return d.getDate() + ' ' + months[d.getMonth()] + ' ' + d.getFullYear();
+      } catch { return iso.slice(0, 10); }
+    }
+    function channelsBadge(c) {
+      const chans = c.channels || ['email'];
+      return chans.map(ch => ch === 'whatsapp' ? '💬 WhatsApp' : '📧 Email').join(' + ');
+    }
+    function costStr(c) {
+      const cents = c.cost_cents || 0;
+      if (cents === 0) return 'Gratuit';
+      return (cents / 100).toFixed(2).replace('.', ',') + ' € HT';
+    }
+
     return (
-        <div>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
-                <div><div style={{ fontSize: 18, fontWeight: 700 }}>Campagnes email</div></div>
-                <button className="ba" onClick={() => { setCampaignMode('create'); setCampSubject(''); setCampBody(''); setCampFilterTags([]); setCampNotSeen(''); setCampPreviewCount(null); }}>+ Nouvelle campagne</button>
-            </div>
-            <div className="card">
-                {campaignList.length === 0 ? (
-                    <div className="ph" style={{ border: 'none', boxShadow: 'none' }}>
-                        <div className="phi">&#9993;</div>
-                        <div style={{ fontSize: 14, fontWeight: 600 }}>Aucune campagne envoyee</div>
-                        <div style={{ fontSize: 12, color: 'var(--tm)', marginTop: 4 }}>Envoyez votre premiere campagne email a vos clients</div>
-                    </div>
-                ) : campaignList.slice().reverse().map(c => (
-                    <div key={c.id} className="rw">
-                        <div>
-                            <div style={{ fontSize: 13, fontWeight: 600 }}>{c.subject}</div>
-                            <div style={{ fontSize: 11, color: 'var(--tm)' }}>{c.date?.slice(0,10)} - {c.sent} envoyes / {c.total} contacts</div>
-                        </div>
-                        <span className="badge" style={{ background: 'var(--okb)', color: 'var(--ok)' }}>Envoye</span>
-                    </div>
-                ))}
-            </div>
+      <div>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14, flexWrap: 'wrap', gap: 12 }}>
+          <div>
+            <div style={{ fontSize: 22, fontWeight: 800, color: 'var(--t)' }}>Campagnes</div>
+            <div style={{ fontSize: 12, color: 'var(--tm)', marginTop: 2 }}>Email, WhatsApp ou les deux — historique de vos envois</div>
+          </div>
+          <button className="ba" onClick={() => {
+            setCampaignMode('create'); setCampSubject(''); setCampBody('');
+            setCampFilterTags([]); setCampNotSeen(0); setCampPreviewCount(null);
+            setCampChannels(['email']); setCampTemplate(null);
+            loadWallet();
+          }}>+ Nouvelle campagne</button>
         </div>
+        <div className="card">
+          {campaignList.length === 0 ? (
+            <div className="ph" style={{ border: 'none', boxShadow: 'none' }}>
+              <div className="phi">&#9993;</div>
+              <div style={{ fontSize: 14, fontWeight: 600 }}>Aucune campagne envoyée</div>
+              <div style={{ fontSize: 12, color: 'var(--tm)', marginTop: 4 }}>Envoyez votre première campagne à vos clients</div>
+            </div>
+          ) : campaignList.slice().reverse().map(c => (
+            <div key={c.id} className="rw">
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 13, fontWeight: 600 }}>{c.template || c.subject || 'Campagne'}</div>
+                <div style={{ fontSize: 11, color: 'var(--tm)', marginTop: 2 }}>
+                  {fmtCampDateLong(c.date)} · {c.sent || 0}/{c.total || 0} contacts · {channelsBadge(c)} · {costStr(c)}
+                </div>
+              </div>
+              <span className="badge" style={{ background: 'var(--okb)', color: 'var(--ok)' }}>Envoyée</span>
+            </div>
+          ))}
+        </div>
+      </div>
     );
   }
 
