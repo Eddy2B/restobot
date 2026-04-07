@@ -6553,6 +6553,36 @@ async def api_campaign_preview(request: Request):
     matched = _filter_contacts(rid, filters)
     return {"count": len(matched)}
 
+WHATSAPP_BROADCAST_COST_CENTS = 15  # 0,15 € HT par message WhatsApp campagne
+
+def get_wallet_cents(rid: str) -> int:
+    rest = restaurants_cache.get(rid, {})
+    return int(rest.get("settings", {}).get("wallet_balance_cents", 0) or 0)
+
+async def debit_wallet(rid: str, amount_cents: int) -> bool:
+    rest = restaurants_cache.get(rid)
+    if not rest:
+        return False
+    settings = rest.setdefault("settings", {})
+    current = int(settings.get("wallet_balance_cents", 0) or 0)
+    if current < amount_cents:
+        return False
+    settings["wallet_balance_cents"] = current - amount_cents
+    await db_save_restaurant(rid, rest)
+    return True
+
+
+@app.get("/api/wallet")
+async def api_get_wallet(request: Request):
+    auth = get_auth(request)
+    if not auth:
+        return Response(status_code=401)
+    rid = auth["restaurant_id"]
+    cents = get_wallet_cents(rid)
+    return {"balance_cents": cents, "balance_eur": round(cents / 100, 2),
+            "wa_msg_cost_cents": WHATSAPP_BROADCAST_COST_CENTS}
+
+
 @app.post("/api/campaigns/send")
 async def api_campaign_send(request: Request):
     auth = get_auth(request)
@@ -6563,34 +6593,90 @@ async def api_campaign_send(request: Request):
     subject = sanitize_input(data.get("subject", ""), 200)
     body = sanitize_input(data.get("body", ""), 5000)
     filters = data.get("filters", {})
-    if not subject or not body:
-        return JSONResponse(status_code=400, content={"error": "Sujet et message requis"})
+    channels = data.get("channels") or ["email"]
+    if not isinstance(channels, list):
+        channels = ["email"]
+    channels = [c for c in channels if c in ("email", "whatsapp")]
+    if not channels:
+        return JSONResponse(status_code=400, content={"error": "Au moins un canal requis (email ou whatsapp)"})
+    template_label = sanitize_input(data.get("template", ""), 80)
+    if "email" in channels and not subject:
+        return JSONResponse(status_code=400, content={"error": "Objet requis pour l'envoi email"})
+    if not body:
+        return JSONResponse(status_code=400, content={"error": "Message requis"})
     rest = restaurants_cache.get(rid, {})
     rest_name = rest.get("name", "Restaurant")
     matched = _filter_contacts(rid, filters)
-    sent_count = 0
+
+    # Pre-flight wallet check for WhatsApp broadcast
+    cost_cents = 0
+    if "whatsapp" in channels:
+        wa_recipients = sum(1 for c in matched if c.get("phone"))
+        cost_cents = wa_recipients * WHATSAPP_BROADCAST_COST_CENTS
+        wallet = get_wallet_cents(rid)
+        if cost_cents > wallet:
+            return JSONResponse(status_code=402, content={
+                "error": f"Wallet insuffisant : {wa_recipients} messages WhatsApp = {cost_cents/100:.2f} € HT, solde {wallet/100:.2f} €",
+                "needed_cents": cost_cents, "balance_cents": wallet,
+            })
+
+    sent_email = 0
+    sent_wa = 0
+    wa_phone_id = rest.get("whatsapp_phone_number_id", "")
+    wa_token = rest.get("whatsapp_access_token", "")
     for ct in matched:
-        ct_email = ct.get("email")
-        if not ct_email:
-            continue
         ct_name = (ct.get("name") or "").split()[0] if ct.get("name") else ""
-        html = body.replace("{prenom}", ct_name).replace("{restaurant}", rest_name)
-        subj = subject.replace("{prenom}", ct_name).replace("{restaurant}", rest_name)
-        try:
-            if BREVO_API_KEY:
-                async with httpx.AsyncClient(timeout=10) as client:
-                    await client.post("https://api.brevo.com/v3/smtp/email",
-                        headers={"api-key": BREVO_API_KEY, "Content-Type": "application/json"},
-                        json={"sender": {"name": rest_name, "email": "contact@guestscale.com"},
-                              "to": [{"email": ct_email, "name": ct.get("name", "")}],
-                              "subject": subj, "htmlContent": f"<div style='font-family:sans-serif;max-width:560px;margin:0 auto;padding:24px'>{html}</div>"})
-                sent_count += 1
-        except Exception as e:
-            logger.error(f"Campaign email error: {e}")
-    campaign = {"id": f"C{len(campaigns_store.get(rid, []))+1}", "subject": subject, "sent": sent_count,
-                "total": len(matched), "date": now_paris().isoformat(), "filters": filters}
+        text_body = body.replace("{prenom}", ct_name).replace("{restaurant}", rest_name)
+        # Email
+        if "email" in channels:
+            ct_email = ct.get("email")
+            if ct_email:
+                subj = subject.replace("{prenom}", ct_name).replace("{restaurant}", rest_name)
+                try:
+                    if BREVO_API_KEY:
+                        async with httpx.AsyncClient(timeout=10) as client:
+                            await client.post("https://api.brevo.com/v3/smtp/email",
+                                headers={"api-key": BREVO_API_KEY, "Content-Type": "application/json"},
+                                json={"sender": {"name": rest_name, "email": "contact@guestscale.com"},
+                                      "to": [{"email": ct_email, "name": ct.get("name", "")}],
+                                      "subject": subj, "htmlContent": f"<div style='font-family:sans-serif;max-width:560px;margin:0 auto;padding:24px'>{text_body}</div>"})
+                        sent_email += 1
+                except Exception as e:
+                    logger.error(f"Campaign email error: {e}")
+        # WhatsApp
+        if "whatsapp" in channels:
+            ct_phone = ct.get("phone")
+            if ct_phone and wa_phone_id and wa_token:
+                try:
+                    await send_whatsapp_message(wa_phone_id, wa_token, ct_phone, text_body)
+                    debited = await debit_wallet(rid, WHATSAPP_BROADCAST_COST_CENTS)
+                    if debited:
+                        sent_wa += 1
+                        await increment_message_count(rid, "broadcast")
+                    else:
+                        logger.warning(f"Wallet drained mid-campaign: {rid}")
+                        break
+                except Exception as e:
+                    logger.error(f"Campaign WhatsApp error: {e}")
+
+    sent_count = sent_email + sent_wa
+    campaign = {
+        "id": f"C{len(campaigns_store.get(rid, []))+1}",
+        "subject": subject,
+        "template": template_label,
+        "channels": channels,
+        "sent": sent_count,
+        "sent_email": sent_email,
+        "sent_whatsapp": sent_wa,
+        "total": len(matched),
+        "cost_cents": sent_wa * WHATSAPP_BROADCAST_COST_CENTS,
+        "date": now_paris().isoformat(),
+        "filters": filters,
+    }
     campaigns_store.setdefault(rid, []).append(campaign)
-    return {"status": "ok", "sent": sent_count}
+    return {"status": "ok", "sent": sent_count, "sent_email": sent_email,
+            "sent_whatsapp": sent_wa, "cost_cents": campaign["cost_cents"],
+            "wallet_balance_cents": get_wallet_cents(rid)}
 
 def _filter_contacts(rid: str, filters: dict) -> list:
     rid_contacts = contacts.get(rid, {})
