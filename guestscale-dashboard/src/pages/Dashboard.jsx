@@ -2789,9 +2789,9 @@ export default function Dashboard() {
   function renderCampaignCreate() {
     const allTags = [...new Set(Object.values(state.contacts).flatMap(c => c.tags || []))].sort();
     const templates = [
-        { label: 'Ca fait longtemps !', subject: 'On vous attend !', body: 'Bonjour {prenom}, cela fait un moment que nous ne vous avons pas vu chez {restaurant}. Votre table preferee vous attend ! Reservez vite.' },
-        { label: 'Soiree speciale', subject: 'Evenement special chez {restaurant}', body: 'Bonjour {prenom}, nous organisons une soiree speciale et nous serions ravis de vous compter parmi nos invites.' },
-        { label: 'Merci fidelite', subject: 'Merci pour votre fidelite', body: 'Bonjour {prenom}, merci de votre fidelite chez {restaurant}. Pour vous remercier, nous vous offrons un aperitif lors de votre prochaine visite.' },
+        { label: 'Ça fait longtemps !', subject: 'On vous attend !', body: 'Bonjour {prenom}, cela fait un moment que nous ne vous avons pas vu chez {restaurant}. Votre table préférée vous attend ! Réservez vite.' },
+        { label: 'Soirée spéciale', subject: 'Événement spécial chez {restaurant}', body: 'Bonjour {prenom}, nous organisons une soirée spéciale et nous serions ravis de vous compter parmi nos invités.' },
+        { label: 'Merci fidélité', subject: 'Merci pour votre fidélité', body: 'Bonjour {prenom}, merci de votre fidélité chez {restaurant}. Pour vous remercier, nous vous offrons un apéritif lors de votre prochaine visite.' },
     ];
 
     return (
