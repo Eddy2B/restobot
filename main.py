@@ -2658,7 +2658,7 @@ body{font-family:var(--f);background:var(--bg);color:var(--t);min-height:100vh;-
     </div>
     <button class="lbtn" type="button" onclick="doLogin()" data-doLogin>Se connecter</button>
     <div style="text-align:center;margin-top:12px">
-      <a href="#" onclick="showForgotPwd();return false" style="font-size:12px;color:#6B7280;text-decoration:none">Mot de passe oublie ?</a>
+      <a href="#" onclick="showForgotPwd();return false" style="font-size:12px;color:#6B7280;text-decoration:none">Mot de passe oublié ?</a>
     </div>
     <div style="text-align:center;margin-top:16px">
       <span style="font-size:12px;color:#6B7280">Pas encore de compte ?</span>
@@ -2694,14 +2694,14 @@ body{font-family:var(--f);background:var(--bg);color:var(--t);min-height:100vh;-
     <div class="sb-l">PRINCIPAL</div>
     <button class="nb on" data-pg="overview"><span class="ic">&#9672;</span> Vue d&#39;ensemble</button>
     <button class="nb" data-pg="floorplan"><span class="ic">&#8862;</span> Plan de salle</button>
-    <button class="nb" data-pg="bookings"><span class="ic">&#9673;</span> Reservations <span class="nb-badge" id="bookBadge" style="background:var(--wa);color:#fff">0</span></button>
+    <button class="nb" data-pg="bookings"><span class="ic">&#9673;</span> Réservations <span class="nb-badge" id="bookBadge" style="background:var(--wa);color:#fff">0</span></button>
     <button class="nb" data-pg="menu"><span class="ic">&#9680;</span> Menu</button>
     <div class="sb-l">CLIENTS</div>
     <button class="nb" data-pg="conversations"><span class="ic">&#9672;</span> Conversations <span class="nb-badge" id="convBadge" style="background:var(--ac);color:#fff">0</span></button>
     <button class="nb" data-pg="reviews"><span class="ic">&#9733;</span> Avis <span class="nb-badge" id="reviewBadge" style="background:var(--ac);color:#fff">0</span></button>
     <button class="nb" data-pg="contacts"><span class="ic">&#9671;</span> Contacts</button>
     <button class="nb" data-pg="waitlist"><span class="ic">&#9201;</span> Liste d'attente <span class="nb-badge" id="waitBadge" style="background:var(--wa);color:#fff">0</span></button>
-    <div class="sb-l">PARAMETRES</div>
+    <div class="sb-l">PARAMÈTRES</div>
     <button class="nb" data-pg="config"><span class="ic">&#9881;</span> Configuration</button>
     <button class="nb" data-pg="stats"><span class="ic">&#9899;</span> Statistiques</button>
     <button class="nb" data-pg="account"><span class="ic">&#128100;</span> Mon compte</button>
@@ -3398,7 +3398,7 @@ function renderOverview(c){
   // Bookings + Conversations
   if(overviewBlocks.bookings){
     var srcColors={whatsapp:'#25D366',web:'#2563EB',phone:'#A8A29E','walk-in':'#78716C',zenchef:'#FF6B35'};
-    h+='<div class="g2" id="ov-book"><div class="card"><div class="card-h"><div><div class="card-t">Réservations</div><div class="card-s">'+tb.length+' '+dateLabel+'</div></div><button class="ba" onclick="openResaModal()">+ Nouvelle</button></div>';
+    h+='<div class="g2" id="ov-book"><div class="card"><div class="card-h"><div><div class="card-t">Réservations</div><div class="card-s">'+tb.length+' '+dateLabel+'</div></div><button class="ba" onclick="openResaModal()">+ Nouvelle réservation</button></div>';
     tb.slice(0,5).forEach(function(b){
       h+='<div class="rw"><div class="rl"><div class="dot" style="background:'+(srcColors[b.source]||'#A8A29E')+'"></div><div><div style="font-size:14px;font-weight:600">'+b.name+'</div><div style="font-size:12px;color:var(--tm)">'+b.covers+'p · '+(b.booking_time||b.time||'')+'</div></div></div><span class="badge" style="background:var(--okb);color:var(--ok)">'+(b.table||'—')+'</span></div>';
     });
@@ -3427,7 +3427,7 @@ function renderOverview(c){
       var srcColors2={whatsapp:'#25D366',web:'#2563EB',phone:'#A8A29E','walk-in':'#78716C',zenchef:'#FF6B35'};
       var srcLabels={whatsapp:'WhatsApp',web:'Web',phone:'Tél','walk-in':'Walk-in',zenchef:'Zenchef'};
       var src=ct.source||'phone';
-      h+='<div class="cc"><div style="font-size:14px;font-weight:600">'+(ct.name||phone)+'</div><div style="font-size:12px;color:var(--tm);margin-top:4px">'+phone+'</div><div style="display:flex;justify-content:space-between;align-items:center;margin-top:6px"><span style="font-size:11px;color:var(--ts)">'+(ct.visits||0)+' visites</span><span class="src-badge" style="color:'+(srcColors2[src]||'#A8A29E')+';background:'+(srcColors2[src]||'#A8A29E')+'15">'+(srcLabels[src]||src)+'</span></div></div>';
+      h+='<div class="cc"><div style="font-size:14px;font-weight:600">'+(ct.name||phone)+'</div><div style="font-size:12px;color:var(--tm);margin-top:4px">'+phone+'</div><div style="display:flex;justify-content:space-between;align-items:center;margin-top:6px"><span style="font-size:11px;color:var(--ts)">'+(ct.visits||0)+' visite'+((ct.visits||0)>1?'s':'')+'</span><span class="src-badge" style="color:'+(srcColors2[src]||'#A8A29E')+';background:'+(srcColors2[src]||'#A8A29E')+'15">'+(srcLabels[src]||src)+'</span></div></div>';
     });
     h+='</div></div>';
   }
@@ -3532,7 +3532,7 @@ function renderFloorplan(c){
 
   h+='<div class="card" style="padding:20px;margin-bottom:14px">';
   h+='<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px"><div><div class="card-t">Plan de salle</div><div class="card-s" id="fpSummary">'+floorplan.length+' tables \u00b7 '+totalSeats+' places \u00b7 <span style="color:var(--ok)">'+free+' libres</span> \u00b7 <span style="color:var(--da)">'+booked+' occupees</span></div></div>';
-  h+='<div style="display:flex;gap:6px"><button style="padding:8px 16px;border-radius:8px;border:1.5px solid '+(fpMode==='resa'?'var(--ac)':'var(--b)')+';background:'+(fpMode==='resa'?'var(--al)':'var(--card)')+';color:'+(fpMode==='resa'?'var(--ac)':'var(--ts)')+';font-size:12px;font-weight:700;cursor:pointer;font-family:var(--f)" data-fpModeResa>Reservations</button>';
+  h+='<div style="display:flex;gap:6px"><button style="padding:8px 16px;border-radius:8px;border:1.5px solid '+(fpMode==='resa'?'var(--ac)':'var(--b)')+';background:'+(fpMode==='resa'?'var(--al)':'var(--card)')+';color:'+(fpMode==='resa'?'var(--ac)':'var(--ts)')+';font-size:12px;font-weight:700;cursor:pointer;font-family:var(--f)" data-fpModeResa>Réservations</button>';
   h+='<button style="padding:8px 16px;border-radius:8px;border:1.5px solid '+(fpMode==='edit'?'var(--ac)':'var(--b)')+';background:'+(fpMode==='edit'?'var(--al)':'var(--card)')+';color:'+(fpMode==='edit'?'var(--ac)':'var(--ts)')+';font-size:12px;font-weight:700;cursor:pointer;font-family:var(--f)" data-fpModeEdit>Modifier plan</button></div></div>';
   if(fpMode==='edit'){
     h+='<div style="display:flex;gap:5px;margin-bottom:10px;padding:8px 12px;background:var(--bg);border-radius:10px;overflow-x:auto;align-items:center"><span style="font-size:11px;font-weight:700;color:var(--tm);white-space:nowrap;margin-right:4px">Ajouter :</span>';
@@ -3894,12 +3894,12 @@ function renderBookings(c){
     h+='<div class="ov-layout" style="display:flex;gap:14px;align-items:flex-start">';
     h+='<div style="flex:1;min-width:0">';
     var filtered=getBookingsForDate(selectedDate);
-    h+='<div class="card"><div class="card-h"><div><div class="card-t">Réservations</div><div class="card-s">'+filtered.length+' '+dateLabel+'</div></div><button class="ba" onclick="openResaModal()">+ Nouvelle</button></div>';
+    h+='<div class="card"><div class="card-h"><div><div class="card-t">Réservations</div><div class="card-s">'+filtered.length+' '+dateLabel+'</div></div><button class="ba" onclick="openResaModal()">+ Nouvelle réservation</button></div>';
     filtered.forEach(function(b){
       var globalIdx=bookings.indexOf(b);
       h+='<div class="rw" data-editResa="'+globalIdx+'" style="cursor:pointer"><div class="rl"><div class="dot" style="background:'+(srcColors[b.source]||'#A8A29E')+'"></div><div><div style="font-size:14px;font-weight:600">'+b.name+'</div><div style="font-size:12px;color:var(--tm)">'+b.covers+'p · '+(b.booking_time||b.time||'')+(b.phone?' · '+b.phone:'')+'</div></div></div><div style="display:flex;align-items:center;gap:6px"><span class="src-badge" style="color:'+(srcColors[b.source]||'#A8A29E')+';background:'+(srcColors[b.source]||'#A8A29E')+'15">'+(srcLabels[b.source]||b.source)+'</span><span class="badge" style="background:var(--okb);color:var(--ok)">'+(b.table||'—')+'</span></div></div>';
     });
-    if(!filtered.length) h+='<div style="padding:30px;text-align:center;color:var(--tm)">Aucune reservation '+dateLabel+'</div>';
+    if(!filtered.length) h+='<div style="padding:30px;text-align:center;color:var(--tm)">Aucune réservation '+dateLabel+'</div>';
     h+='</div>';
     h+='</div>';
     h+='<div style="width:280px;flex-shrink:0">';
@@ -4262,7 +4262,7 @@ function renderContacts(c){
   entries.forEach(function(e){
     var phone=e[0],ct=e[1];
     var src=ct.source||'phone';
-    h+='<div class="rw" data-contact="'+phone+'" style="cursor:pointer"><div class="rl"><div style="width:36px;height:36px;border-radius:50%;background:var(--al);display:flex;align-items:center;justify-content:center;color:var(--ac);font-size:13px;font-weight:700">'+(ct.name||'?').charAt(0).toUpperCase()+'</div><div><div style="font-size:14px;font-weight:600">'+(ct.name||phone)+'</div><div style="font-size:12px;color:var(--tm)">'+phone+(ct.email?' · '+ct.email:'')+'</div></div></div><div style="display:flex;align-items:center;gap:8px"><span style="font-size:12px;color:var(--ts)">'+(ct.visits||0)+' visites</span><span class="src-badge" style="color:'+(srcColors[src]||'#A8A29E')+';background:'+(srcColors[src]||'#A8A29E')+'15">'+(srcLabels[src]||src)+'</span></div></div>';
+    h+='<div class="rw" data-contact="'+phone+'" style="cursor:pointer"><div class="rl"><div style="width:36px;height:36px;border-radius:50%;background:var(--al);display:flex;align-items:center;justify-content:center;color:var(--ac);font-size:13px;font-weight:700">'+(ct.name||'?').charAt(0).toUpperCase()+'</div><div><div style="font-size:14px;font-weight:600">'+(ct.name||phone)+'</div><div style="font-size:12px;color:var(--tm)">'+phone+(ct.email?' · '+ct.email:'')+'</div></div></div><div style="display:flex;align-items:center;gap:8px"><span style="font-size:12px;color:var(--ts)">'+(ct.visits||0)+' visite'+((ct.visits||0)>1?'s':'')+'</span><span class="src-badge" style="color:'+(srcColors[src]||'#A8A29E')+';background:'+(srcColors[src]||'#A8A29E')+'15">'+(srcLabels[src]||src)+'</span></div></div>';
   });
   if(!entries.length) h+='<div style="padding:30px;text-align:center;color:var(--tm)">Aucun contact</div>';
   h+='</div>';
@@ -4286,7 +4286,7 @@ function openContactCard(phone){
   // Stats row
   h+='<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px">';
   h+='<div style="text-align:center;padding:12px;background:var(--bg);border-radius:10px"><div style="font-size:22px;font-weight:800;color:var(--ac)">'+(ct.visits||0)+'</div><div style="font-size:11px;color:var(--tm);font-weight:600">Visites</div></div>';
-  h+='<div style="text-align:center;padding:12px;background:var(--bg);border-radius:10px"><div style="font-size:22px;font-weight:800;color:var(--ok)">'+resas.length+'</div><div style="font-size:11px;color:var(--tm);font-weight:600">Reservations</div></div>';
+  h+='<div style="text-align:center;padding:12px;background:var(--bg);border-radius:10px"><div style="font-size:22px;font-weight:800;color:var(--ok)">'+resas.length+'</div><div style="font-size:11px;color:var(--tm);font-weight:600">Réservations</div></div>';
   h+='<div style="text-align:center;padding:12px;background:var(--bg);border-radius:10px"><div style="font-size:22px;font-weight:800;color:var(--bl2)">'+msgs.length+'</div><div style="font-size:11px;color:var(--tm);font-weight:600">Messages</div></div>';
   h+='</div></div>';
 
@@ -4682,7 +4682,7 @@ function renderStats(c){
     // Sources
     var sources=t.sources||{};
     var totalSrc=Object.values(sources).reduce(function(a,v){return a+v},0)||1;
-    h+='<div class="card" style="padding:20px"><div class="card-t" style="margin-bottom:16px">Reservations par canal</div>';
+    h+='<div class="card" style="padding:20px"><div class="card-t" style="margin-bottom:16px">Réservations par canal</div>';
     var srcEntries=Object.entries(sources).sort(function(a,b){return b[1]-a[1]});
     if(srcEntries.length){
       srcEntries.forEach(function(e){
@@ -6015,7 +6015,7 @@ async def twilio_confirm_gather(request: Request):
                 if digits == "1":
                     b["reminder_confirmed"] = True
                     logger.info(f"Booking confirmed via DTMF: {b.get('name')} {b.get('date')}")
-                    twiml = '<?xml version="1.0" encoding="UTF-8"?><Response><Say language="fr-FR" voice="Polly.Lea">Merci, votre reservation est confirmee. A bientot !</Say></Response>'
+                    twiml = '<?xml version="1.0" encoding="UTF-8"?><Response><Say language="fr-FR" voice="Polly.Lea">Merci, votre réservation est confirmée. À bientôt !</Say></Response>'
                 elif digits == "2":
                     b["reminder_confirmed"] = False
                     b["status"] = "cancelled"

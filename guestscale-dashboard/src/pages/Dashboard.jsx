@@ -38,6 +38,23 @@ function occasionBadge(occasion) {
   return <span title={occasion} style={{ marginLeft: 4 }}>{emoji}</span>;
 }
 
+const MOIS_FR = ['Janvier','Février','Mars','Avril','Mai','Juin','Juillet','Août','Septembre','Octobre','Novembre','Décembre'];
+
+function formatMonthFr(ym) {
+  if (!ym || typeof ym !== 'string') return ym;
+  const [y, m] = ym.split('-');
+  const idx = parseInt(m) - 1;
+  return MOIS_FR[idx] ? MOIS_FR[idx] + ' ' + y : ym;
+}
+
+function formatDateFr(ds) {
+  if (!ds) return '';
+  try {
+    const d = new Date(ds + (ds.length === 10 ? 'T12:00:00' : ''));
+    return d.getDate() + ' ' + MOIS_FR[d.getMonth()].toLowerCase() + ' ' + d.getFullYear();
+  } catch { return ds; }
+}
+
 function initials(name) {
   if (!name) return '?';
   const parts = name.trim().split(/\s+/);
@@ -811,7 +828,7 @@ export default function Dashboard() {
         {usageData && (
           <div className="card" style={{ marginBottom: 14, padding: 16 }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
-              <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--tm)' }}>UTILISATION — {usageData.month}</div>
+              <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--tm)' }}>UTILISATION — {formatMonthFr(usageData.month)}</div>
               <button style={{ fontSize: 11, color: 'var(--ac)', background: 'none', border: 'none', cursor: 'pointer', fontFamily: 'var(--f)', fontWeight: 600 }}
                 onClick={() => setPage('usage')}>Voir le détail</button>
             </div>
@@ -865,7 +882,7 @@ export default function Dashboard() {
             <div className="sc">
               <div className="sl">Reservations</div>
               <div className="sv">{bookingsToday}</div>
-              <div className="ss2">{selDate === todayStr ? "Aujourd'hui" : selDate}</div>
+              <div className="ss2">{selDate === todayStr ? "Aujourd'hui" : formatDateFr(selDate)}</div>
             </div>
             <div className="sc">
               <div className="sl">Conversations</div>
@@ -922,7 +939,7 @@ export default function Dashboard() {
                 <div className="card-h">
                   <div>
                     <div className="card-t">Reservations</div>
-                    <div className="card-s">{bookingsForDate.length} pour le {selDate}</div>
+                    <div className="card-s">{bookingsForDate.length} pour le {formatDateFr(selDate)}</div>
                   </div>
                   <button className="ba" onClick={openNewResa}>+ Nouvelle</button>
                 </div>
@@ -1009,7 +1026,7 @@ export default function Dashboard() {
                       <div style={{ fontSize: 12, fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                         {c.name || c.phone}
                       </div>
-                      <div style={{ fontSize: 10, color: 'var(--tm)' }}>{c.visits || 0} visites</div>
+                      <div style={{ fontSize: 10, color: 'var(--tm)' }}>{c.visits || 0} visite{(c.visits || 0) > 1 ? 's' : ''}</div>
                     </div>
                   ))}
                 </div>
@@ -1352,7 +1369,7 @@ export default function Dashboard() {
                   )}
                   {noTime.map(bk => renderBk(bk, 'var(--tm)'))}
                   {allDayBks.length === 0 && (
-                    <div className="fp-sb-empty">Aucune reservation ce jour</div>
+                    <div className="fp-sb-empty">Aucune réservation ce jour</div>
                   )}
                 </div>
                 <div style={{ padding: 12, borderTop: '1px solid var(--bl)' }}>
@@ -1452,7 +1469,7 @@ export default function Dashboard() {
           <div className="card">
             <div className="card-h">
               <div>
-                <div className="card-t">Reservations du {selDate}</div>
+                <div className="card-t">Réservations du {formatDateFr(selDate)}</div>
                 <div className="card-s">{bookingsForDate.length} reservations</div>
               </div>
             </div>
@@ -1479,7 +1496,7 @@ export default function Dashboard() {
             ))}
             {bookingsForDate.length === 0 && (
               <div style={{ padding: 40, textAlign: 'center', color: 'var(--tm)', fontSize: 13 }}>
-                Aucune réservation pour le {selDate}
+                Aucune réservation pour le {formatDateFr(selDate)}
               </div>
             )}
           </div>
@@ -1533,7 +1550,7 @@ export default function Dashboard() {
             ))}
             {results.length === 0 && (
                 <div style={{ padding: 40, textAlign: 'center', color: 'var(--tm)', fontSize: 13 }}>
-                    Aucune reservation trouvee pour &ldquo;{bkSearch}&rdquo;
+                    Aucune réservation trouvée pour &ldquo;{bkSearch}&rdquo;
                 </div>
             )}
         </div>
@@ -2123,7 +2140,7 @@ export default function Dashboard() {
                 <div>
                   <div style={{ fontSize: 13, fontWeight: 600 }}>{c.name || c.phone}</div>
                   <div style={{ fontSize: 11, color: 'var(--tm)' }}>
-                    {c.phone} &middot; {c.visits || 0} visites
+                    {c.phone} &middot; {c.visits || 0} visite{(c.visits || 0) > 1 ? 's' : ''}
                     {c.language ? ' · ' + c.language : ''}
                   </div>
                 </div>
@@ -2291,7 +2308,7 @@ export default function Dashboard() {
           ))}
           {contactBookings.length === 0 && (
             <div style={{ padding: 20, textAlign: 'center', color: 'var(--tm)', fontSize: 12 }}>
-              Aucune reservation
+              Aucune réservation
             </div>
           )}
         </div>
@@ -2672,7 +2689,7 @@ export default function Dashboard() {
                     display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 11, fontWeight: 700 }}>{i + 1}</div>
                   <div style={{ fontSize: 13, fontWeight: 600 }}>{c.name}</div>
                 </div>
-                <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--ac)' }}>{c.visits} visites</div>
+                <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--ac)' }}>{c.visits} visite{c.visits > 1 ? 's' : ''}</div>
               </div>
             ))}
           </div>
@@ -2689,7 +2706,7 @@ export default function Dashboard() {
     return (
         <div>
             <div className="card" style={{ padding: 20, marginBottom: 14 }}>
-                <div className="card-t" style={{ marginBottom: 4 }}>Utilisation — {u.month}</div>
+                <div className="card-t" style={{ marginBottom: 4 }}>Utilisation — {formatMonthFr(u.month)}</div>
                 <div className="card-s">Plan {u.plan === 'founder' ? 'Fondateur' : u.plan === 'standard' ? 'Standard' : 'Essai'} — {u.messages_included} messages inclus/mois</div>
                 <div style={{ height: 12, background: 'var(--bl)', borderRadius: 6, overflow: 'hidden', margin: '16px 0 8px' }}>
                     <div style={{ height: '100%', borderRadius: 6, width: Math.min(u.usage_percent, 100) + '%', background: barColor, transition: 'width .3s' }} />
@@ -2722,7 +2739,7 @@ export default function Dashboard() {
                     <div className="card-t" style={{ marginBottom: 14 }}>Historique</div>
                     {u.history.map(h => (
                         <div key={h.month} className="cfr">
-                            <div><div className="cfl">{h.month}</div><div className="cfd">{h.messages_sent} messages</div></div>
+                            <div><div className="cfl">{formatMonthFr(h.month)}</div><div className="cfd">{h.messages_sent} messages</div></div>
                             <div style={{ textAlign: 'right' }}>
                                 {h.overage > 0 ? <span style={{ color: '#EF4444', fontSize: 12, fontWeight: 600 }}>{h.overage} depassement ({h.cost}&#8364;)</span>
                                     : <span style={{ color: 'var(--ok)', fontSize: 12 }}>Inclus</span>}
@@ -3236,7 +3253,7 @@ export default function Dashboard() {
                                 onMouseOut={e => e.currentTarget.style.background = ''}
                                 onClick={() => selectContactSuggestion(ct)}>
                                 <div style={{ fontWeight: 600 }}>{ct.name}</div>
-                                <div style={{ fontSize: 11, color: 'var(--tm)' }}>{ct.phone} · {ct.visits || 0} visites</div>
+                                <div style={{ fontSize: 11, color: 'var(--tm)' }}>{ct.phone} · {ct.visits || 0} visite{(ct.visits || 0) > 1 ? 's' : ''}</div>
                             </div>
                         ))}
                     </div>
@@ -3247,7 +3264,7 @@ export default function Dashboard() {
             )}
             {nrContactMatch && (
                 <div style={{ fontSize: 11, color: 'var(--ok)', marginTop: 2, marginBottom: 4 }}>
-                    &#10003; Client connu — {nrContactMatch.visits || 0} visites
+                    &#10003; Client connu — {nrContactMatch.visits || 0} visite{(nrContactMatch.visits || 0) > 1 ? 's' : ''}
                 </div>
             )}
             <div className="finp-group">
