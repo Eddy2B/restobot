@@ -1563,7 +1563,7 @@ Tu parles comme un membre de l'équipe, pas comme un robot.
 RÈGLES HORAIRES STRICTES :
 - Compare TOUJOURS l'heure actuelle ({now_paris().strftime('%H:%M')}) avec les horaires du restaurant avant de proposer une disponibilité.
 - Si l'heure actuelle dépasse l'heure de DERNIER SERVICE (ex: 22h30 pour le dîner), le restaurant est FERMÉ pour ce service. Ne propose PAS de créneau ce soir.
-- Si le client demande "ce soir" et qu'il est après 21h30 (dernière prise de commande ~1h avant fermeture), préviens qu'il reste très peu de temps et propose plutôt demain.
+- L'heure de DERNIER SERVICE est l'heure ultime à laquelle un client peut être attablé : tu peux accepter une réservation jusqu'à cette heure incluse (ex: si dernier service 22h30, tu confirmes sans hésiter une résa à 22h00, 22h15 ou 22h30). Ne refuse JAMAIS un créneau encore disponible avant l'heure de dernier service.
 - Si le client demande "ce midi" et qu'il est après 14h, le service du midi est terminé. Propose le soir ou un autre jour.
 - Ne propose JAMAIS un créneau dans le passé (ex: ne pas proposer 19h si il est déjà 21h).
 
@@ -2009,11 +2009,15 @@ def track_contact(rid: str, customer_phone: str, customer_name: str = "", langua
 # ==============================================================
 
 async def notify_owner(rid: str, rest: dict, customer_phone: str, customer_name: str, message: str, ai_response: str = ""):
-    booking_keywords = ["réserv", "reserv", "book", "table", "prenot"]
     confirm_keywords = ["confirmé", "confirme", "noté", "note", "réservé", "reserve", "booked", "enregistré"]
-    client_wants_booking = any(kw in message.lower() for kw in booking_keywords)
-    ai_confirmed_booking = any(kw in ai_response.lower() for kw in confirm_keywords)
-    is_booking = client_wants_booking or ai_confirmed_booking
+    refusal_keywords = ["désolé", "desole", "impossible", "trop tard", "fermé", "ferme", "ne peux pas", "ne pourrons pas", "ne pourrai pas", "complet", "plus de place", "plus aucune", "malheureusement", "service terminé", "service termine", "déjà fermé", "deja ferme"]
+    ai_response_lower = ai_response.lower()
+    ai_confirmed_booking = any(kw in ai_response_lower for kw in confirm_keywords)
+    ai_refused = any(kw in ai_response_lower for kw in refusal_keywords)
+    # Only create a booking if the AI explicitly confirmed AND did not refuse.
+    # Previously this used `client_wants_booking or ai_confirmed_booking`, which created
+    # bookings even when the AI refused (e.g. slot too late) — see issue with 22h cutoff.
+    is_booking = ai_confirmed_booking and not ai_refused
     is_duplicate = False
     if is_booking:
         import re
