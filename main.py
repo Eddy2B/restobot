@@ -208,7 +208,7 @@ usage_counters = {}  # rid -> {"2026-04": {"total": 0, "missed_call": 0, "remind
 # waitlist[rid] = [{"id": "W1", "phone": ..., "name": ..., "covers": 2, "service": "soir", "date": "2026-03-26", "added_at": ..., "status": "waiting"|"notified"|"accepted"|"declined"|"expired", "notified_at": None, "position": 1}]
 waitlist = {}               # restaurant_id: [entries]
 
-PLAN_LIMITS = {"founder": 500, "standard": 1500, "trial": 100}
+PLAN_LIMITS = {"founder": 500, "standard": 500, "trial": 500}
 PLAN_RATES = {"founder": 0.08, "standard": 0.06, "trial": 0.0}
 
 async def increment_message_count(rid: str, msg_type: str = "other"):
