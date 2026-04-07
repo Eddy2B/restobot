@@ -6234,7 +6234,7 @@ async def api_dashboard_data(request: Request):
             continue
         phone = k.split(":")[1] if ":" in k else k
         last = msgs[-1]
-        recent.append({"phone": phone, "last_message": last["content"][:100], "time": last.get("timestamp", "")[:16].replace("T", " ")})
+        recent.append({"phone": phone, "last_message": last["content"][:200], "time": last.get("timestamp", "")[:16].replace("T", " ")})
     return {"stats": st, "status": status, "conversations_count": sum(1 for k in conversations if k.startswith(rid)), "recent_conversations": recent}
 
 
@@ -6281,7 +6281,7 @@ async def api_list_conversations(request: Request):
         result.append({
             "phone": phone,
             "messages": [{"role": m["role"], "content": m["content"], "time": m.get("timestamp", "")[:16].replace("T", " ")} for m in msgs],
-            "last_message": msgs[-1]["content"][:100],
+            "last_message": msgs[-1]["content"][:200],
             "last_time": msgs[-1].get("timestamp", "")[:16].replace("T", " "),
             "count": len(msgs),
         })

@@ -880,7 +880,7 @@ export default function Dashboard() {
               <div className="ss2">Total échanges</div>
             </div>
             <div className="sc">
-              <div className="sl">Reservations</div>
+              <div className="sl">Réservations</div>
               <div className="sv">{bookingsToday}</div>
               <div className="ss2">{selDate === todayStr ? "Aujourd'hui" : formatDateFr(selDate)}</div>
             </div>
@@ -938,10 +938,10 @@ export default function Dashboard() {
               <div className="card" style={{ marginBottom: 14 }}>
                 <div className="card-h">
                   <div>
-                    <div className="card-t">Reservations</div>
+                    <div className="card-t">Réservations</div>
                     <div className="card-s">{bookingsForDate.length} pour le {formatDateFr(selDate)}</div>
                   </div>
-                  <button className="ba" onClick={openNewResa}>+ Nouvelle</button>
+                  <button className="ba" onClick={openNewResa}>+ Nouvelle réservation</button>
                 </div>
                 {bookingsForDate.slice(0, 5).map(bk => (
                   <div key={bk.id} className="rw" style={{ cursor: 'pointer' }} onClick={() => openEditResa(bk)}>
@@ -972,7 +972,7 @@ export default function Dashboard() {
             <div className="card" style={{ marginBottom: 14 }}>
               <div className="card-h">
                 <div>
-                  <div className="card-t">Conversations recentes</div>
+                  <div className="card-t">Conversations récentes</div>
                   <div className="card-s">{convList.length} conversations</div>
                 </div>
                 <button className="ba" onClick={() => setPage('conversations')}>Voir tout</button>
