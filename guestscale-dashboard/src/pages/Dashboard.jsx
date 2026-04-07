@@ -813,7 +813,7 @@ export default function Dashboard() {
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
               <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--tm)' }}>UTILISATION — {usageData.month}</div>
               <button style={{ fontSize: 11, color: 'var(--ac)', background: 'none', border: 'none', cursor: 'pointer', fontFamily: 'var(--f)', fontWeight: 600 }}
-                onClick={() => setPage('usage')}>Voir le detail</button>
+                onClick={() => setPage('usage')}>Voir le détail</button>
             </div>
             <div style={{ height: 8, background: 'var(--bl)', borderRadius: 4, overflow: 'hidden', marginBottom: 6 }}>
               <div style={{ height: '100%', borderRadius: 4, width: Math.min(usageData.usage_percent, 100) + '%',
@@ -1405,7 +1405,7 @@ export default function Dashboard() {
                 </button>
             ))}
             <div style={{ flex: 1 }} />
-            <button className="ba" onClick={openNewResa}>+ Nouvelle</button>
+            <button className="ba" onClick={openNewResa}>+ Nouvelle réservation</button>
             <button className="ba" style={{ background: 'var(--bg)', color: 'var(--ts)', border: '1px solid var(--b)' }}
               onClick={() => {
                 apiFetch('/api/bookings/export').then(r => r.blob()).then(blob => {
@@ -1430,7 +1430,7 @@ export default function Dashboard() {
 
         {/* Search bar */}
         <input className="finp" style={{ marginBottom: 14 }}
-            placeholder="Rechercher une reservation (nom, telephone, email...)"
+            placeholder="Rechercher une réservation (nom, telephone, email...)"
             value={bkSearch} onChange={e => setBkSearch(e.target.value)} />
 
         {/* Conditional views */}
@@ -1479,7 +1479,7 @@ export default function Dashboard() {
             ))}
             {bookingsForDate.length === 0 && (
               <div style={{ padding: 40, textAlign: 'center', color: 'var(--tm)', fontSize: 13 }}>
-                Aucune reservation pour le {selDate}
+                Aucune réservation pour le {selDate}
               </div>
             )}
           </div>
@@ -3163,7 +3163,7 @@ export default function Dashboard() {
       items: [
         { id: 'overview', icon: '\u25C8', label: "Vue d'ensemble" },
         { id: 'floorplan', icon: '\u229E', label: 'Plan de salle' },
-        { id: 'bookings', icon: '\u25C9', label: 'Reservations', badge: bookingsForDate.length },
+        { id: 'bookings', icon: '\u25C9', label: 'Réservations', badge: bookingsForDate.length },
         { id: 'menu', icon: '\u25D0', label: 'Menu' },
       ]
     },
@@ -3178,7 +3178,7 @@ export default function Dashboard() {
       ]
     },
     {
-      label: 'PARAMETRES',
+      label: 'PARAMÈTRES',
       items: [
         { id: 'config', icon: '\u2699', label: 'Configuration' },
         { id: 'usage', icon: '\u25A3', label: 'Utilisation' },
