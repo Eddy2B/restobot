@@ -11,6 +11,7 @@ import { esc } from '../utils/esc';
 import '../styles/layout.css';
 import '../styles/components.css';
 import '../styles/mobile.css';
+import '../styles/campaigns.css';
 
 const ZONE_COLORS = {
   salle: '#2D7DD2',
@@ -189,8 +190,14 @@ export default function Dashboard() {
   const [campSubject, setCampSubject] = useState('');
   const [campBody, setCampBody] = useState('');
   const [campFilterTags, setCampFilterTags] = useState([]);
-  const [campNotSeen, setCampNotSeen] = useState('');
+  const [campNotSeen, setCampNotSeen] = useState(0);
   const [campPreviewCount, setCampPreviewCount] = useState(null);
+  const [campChannels, setCampChannels] = useState(['email']); // ['email'], ['whatsapp'], or both
+  const [campTemplate, setCampTemplate] = useState(null); // index of selected template
+  const [campPreviewTab, setCampPreviewTab] = useState('whatsapp'); // 'whatsapp' | 'email'
+  const [campWallet, setCampWallet] = useState({ balance_cents: 0, balance_eur: 0, wa_msg_cost_cents: 15 });
+  const campSubjectRef = useRef(null);
+  const campBodyRef = useRef(null);
 
   const [usageData, setUsageData] = useState(null);
 
@@ -665,31 +672,74 @@ export default function Dashboard() {
     } catch {}
   }
 
-  async function previewCampaign() {
+  async function loadWallet() {
     try {
-      const filters = {};
-      if (campFilterTags.length) filters.tags = campFilterTags;
-      if (campNotSeen) filters.not_seen_days = parseInt(campNotSeen);
-      const r = await apiFetch('/api/campaigns/preview', { method: 'POST', body: JSON.stringify({ filters }) });
+      const r = await apiFetch('/api/wallet');
       const d = await r.json();
-      setCampPreviewCount(d.count);
+      setCampWallet({
+        balance_cents: d.balance_cents || 0,
+        balance_eur: d.balance_eur || 0,
+        wa_msg_cost_cents: d.wa_msg_cost_cents || 15,
+      });
     } catch {}
   }
 
+  // Client-side filter mirror of backend _filter_contacts
+  function getMatchedContacts() {
+    const all = Object.values(state.contacts || {});
+    const todayMs = new Date().setHours(0, 0, 0, 0);
+    return all.filter(c => {
+      if (campFilterTags.length) {
+        const tags = c.tags || [];
+        if (!campFilterTags.some(t => tags.includes(t))) return false;
+      }
+      if (campNotSeen && campNotSeen > 0) {
+        const cutoffMs = todayMs - campNotSeen * 86400000;
+        const lastSeen = c.last_seen ? new Date(c.last_seen).getTime() : 0;
+        if (lastSeen >= cutoffMs) return false;
+      }
+      return true;
+    });
+  }
+
   async function sendCampaign() {
-    if (!campSubject || !campBody) { showToast('Sujet et message requis'); return; }
+    const channels = campChannels;
+    if (!channels.length) { showToast('Sélectionnez au moins un canal'); return; }
+    if (channels.includes('email') && !campSubject) { showToast('Objet requis pour l\u2019envoi email'); return; }
+    if (!campBody) { showToast('Message requis'); return; }
+    const matched = getMatchedContacts();
+    if (!matched.length) { showToast('Aucun destinataire'); return; }
     const filters = {};
     if (campFilterTags.length) filters.tags = campFilterTags;
     if (campNotSeen) filters.not_seen_days = parseInt(campNotSeen);
-    if (!window.confirm('Envoyer a ' + (campPreviewCount || '?') + ' contacts ?')) return;
+    const tplLabel = campTemplate !== null ? campaignTemplates[campTemplate].label : '';
+    if (!window.confirm(`Envoyer cette campagne à ${matched.length} contact(s) ?`)) return;
     try {
-      const r = await apiFetch('/api/campaigns/send', { method: 'POST', body: JSON.stringify({ subject: campSubject, body: campBody, filters }) });
+      const r = await apiFetch('/api/campaigns/send', {
+        method: 'POST',
+        body: JSON.stringify({ subject: campSubject, body: campBody, filters, channels, template: tplLabel }),
+      });
       const d = await r.json();
-      showToast('Campagne envoyee a ' + (d.sent || 0) + ' contacts');
+      if (!r.ok) {
+        showToast(d.error || 'Erreur lors de l\u2019envoi');
+        return;
+      }
+      const parts = [];
+      if (d.sent_email) parts.push(`${d.sent_email} email`);
+      if (d.sent_whatsapp) parts.push(`${d.sent_whatsapp} WhatsApp`);
+      showToast('Campagne envoyée — ' + (parts.join(' + ') || `${d.sent} contact(s)`));
       setCampaignMode('list');
       loadCampaigns();
+      loadWallet();
     } catch { showToast('Erreur'); }
   }
+
+  // Templates list — referenced from sendCampaign for label, also used in render
+  const campaignTemplates = [
+    { label: 'Ça fait longtemps !', emoji: '👋', tag: 'Réactivation', tagClass: 'reactivation', subject: 'On vous attend !', body: 'Bonjour {prenom}, cela fait un moment que nous ne vous avons pas vu chez {restaurant}. Votre table préférée vous attend ! Réservez vite.' },
+    { label: 'Soirée spéciale', emoji: '🎉', tag: 'Événement', tagClass: 'event', subject: 'Événement spécial chez {restaurant}', body: 'Bonjour {prenom}, nous organisons une soirée spéciale et nous serions ravis de vous compter parmi nos invités.' },
+    { label: 'Merci fidélité', emoji: '💚', tag: 'Fidélité', tagClass: 'fidelite', subject: 'Merci pour votre fidélité', body: 'Bonjour {prenom}, merci de votre fidélité chez {restaurant}. Pour vous remercier, nous vous offrons un apéritif lors de votre prochaine visite.' },
+  ];
 
   async function submitWizard() {
     try {
@@ -780,7 +830,7 @@ export default function Dashboard() {
         .catch(() => {});
     }
     if (page === 'usage') apiFetch('/api/usage').then(r => r.ok ? r.json() : null).then(u => { if (u) setUsageData(u); }).catch(() => {});
-    if (page === 'campaigns') loadCampaigns();
+    if (page === 'campaigns') { loadCampaigns(); loadWallet(); }
   }, [page, statsRange]);
 
   // ---- Account ----
@@ -2787,70 +2837,388 @@ export default function Dashboard() {
   }
 
   function renderCampaignCreate() {
-    const allTags = [...new Set(Object.values(state.contacts).flatMap(c => c.tags || []))].sort();
-    const templates = [
-        { label: 'Ça fait longtemps !', subject: 'On vous attend !', body: 'Bonjour {prenom}, cela fait un moment que nous ne vous avons pas vu chez {restaurant}. Votre table préférée vous attend ! Réservez vite.' },
-        { label: 'Soirée spéciale', subject: 'Événement spécial chez {restaurant}', body: 'Bonjour {prenom}, nous organisons une soirée spéciale et nous serions ravis de vous compter parmi nos invités.' },
-        { label: 'Merci fidélité', subject: 'Merci pour votre fidélité', body: 'Bonjour {prenom}, merci de votre fidélité chez {restaurant}. Pour vous remercier, nous vous offrons un apéritif lors de votre prochaine visite.' },
-    ];
+    const allContacts = Object.values(state.contacts || {});
+    const allTags = [...new Set(allContacts.flatMap(c => c.tags || []))].sort();
+    const matched = getMatchedContacts();
+    const matchedWithEmail = matched.filter(c => c.email).length;
+    const matchedWithWA = matched.filter(c => c.phone).length;
+    const totalContacts = allContacts.length;
+    const totalEmail = allContacts.filter(c => c.email).length;
+    const totalWA = allContacts.filter(c => c.phone).length;
+    const totalVIP = allContacts.filter(c => (c.tags || []).some(t => t.toLowerCase() === 'vip')).length;
+    const totalNotSeen30 = allContacts.filter(c => {
+      if (!c.last_seen) return true;
+      return (Date.now() - new Date(c.last_seen).getTime()) > 30 * 86400000;
+    }).length;
+
+    const restName = restaurantConfig?.name || state.user?.restaurant_name || 'Restaurant';
+    const restInitials = restName.split(' ').map(w => w[0]).slice(0, 2).join('').toUpperCase();
+
+    // Channel logic
+    const hasEmail = campChannels.includes('email');
+    const hasWA = campChannels.includes('whatsapp');
+    function toggleChannel(ch) {
+      if (campChannels.includes(ch)) {
+        const next = campChannels.filter(c => c !== ch);
+        setCampChannels(next.length ? next : [ch]); // never empty
+      } else {
+        setCampChannels([...campChannels, ch]);
+      }
+    }
+    function selectBoth() { setCampChannels(['email', 'whatsapp']); }
+
+    // Wallet pre-flight
+    const waCostCents = hasWA ? matchedWithWA * (campWallet.wa_msg_cost_cents || 15) : 0;
+    const walletInsufficient = hasWA && waCostCents > campWallet.balance_cents;
+    const walletEmpty = campWallet.balance_cents === 0;
+    const walletDisplay = walletEmpty ? '— €' : (campWallet.balance_eur.toFixed(2).replace('.', ',') + ' €');
+
+    // Cost string
+    function fmtEur(cents) { return (cents / 100).toFixed(2).replace('.', ','); }
+    let costParts = [];
+    if (hasWA && matchedWithWA > 0) costParts.push(`${matchedWithWA} WhatsApp × 0,15 €`);
+    if (hasEmail) costParts.push('email gratuit');
+    const costMain = waCostCents > 0 ? `${fmtEur(waCostCents)} € HT` : '0 € (gratuit)';
+
+    // Insert variable into body
+    function insertVar(v) {
+      const ta = campBodyRef.current;
+      if (!ta) { setCampBody(campBody + v); return; }
+      const start = ta.selectionStart || 0;
+      const end = ta.selectionEnd || 0;
+      const newVal = campBody.slice(0, start) + v + campBody.slice(end);
+      setCampBody(newVal);
+      setTimeout(() => { ta.focus(); ta.setSelectionRange(start + v.length, start + v.length); }, 0);
+    }
+
+    // Pick a sample contact for preview (first matched, fallback first contact, fallback mock)
+    const sampleContact = matched[0] || allContacts[0] || null;
+    const sampleName = sampleContact ? ((sampleContact.name || '').split(' ')[0] || 'Marie') : 'Marie';
+    const sampleEmail = sampleContact?.email || 'marie.dupont@email.com';
+    function rendered(text) {
+      return (text || '').replace(/\{prenom\}/g, sampleName).replace(/\{prénom\}/g, sampleName).replace(/\{restaurant\}/g, restName);
+    }
+    const previewBody = rendered(campBody) || 'Votre message apparaîtra ici en temps réel.';
+    const previewSubject = rendered(campSubject) || 'Objet de votre email';
+
+    // Pick a template
+    function pickTemplate(i) {
+      const t = campaignTemplates[i];
+      setCampTemplate(i);
+      setCampSubject(t.subject);
+      setCampBody(t.body);
+    }
+
+    // Avatar color helper for recipients list
+    const avatarColors = ['#2D7DD2', '#4ECDC4', '#F59E0B', '#EF4444', '#6366F1', '#22C55E'];
+    function avatarColor(name) {
+      const idx = (name || '').split('').reduce((a, c) => a + c.charCodeAt(0), 0) % avatarColors.length;
+      return avatarColors[idx];
+    }
+    function initials(name) {
+      const parts = (name || '?').split(' ').filter(Boolean);
+      return ((parts[0]?.[0] || '?') + (parts[1]?.[0] || '')).toUpperCase();
+    }
+
+    // Last 3 campaigns
+    const lastCampaigns = campaignList.slice().reverse().slice(0, 3);
+    function fmtCampDate(iso) {
+      if (!iso) return '';
+      try {
+        const d = new Date(iso);
+        return d.getDate() + ' ' + ['janv','févr','mars','avril','mai','juin','juil','août','sept','oct','nov','déc'][d.getMonth()];
+      } catch { return iso.slice(0, 10); }
+    }
+    function campChannelsIcons(c) {
+      const chans = c.channels || (c.sent_whatsapp ? ['email', 'whatsapp'] : ['email']);
+      const icons = [];
+      if (chans.includes('email')) icons.push('📧');
+      if (chans.includes('whatsapp')) icons.push('💬');
+      return icons.join(' + ');
+    }
 
     return (
-        <div>
-            <button className="ba" style={{ marginBottom: 14, background: 'var(--bg)', color: 'var(--ts)', border: '1px solid var(--b)' }}
-                onClick={() => setCampaignMode('list')}>&larr; Retour</button>
-
-            <div className="card" style={{ padding: 20, marginBottom: 14 }}>
-                <div className="card-t" style={{ marginBottom: 14 }}>Templates</div>
-                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                    {templates.map((t, i) => (
-                        <button key={i} className="ba" style={{ background: 'var(--al)', color: 'var(--ac)', border: '1px solid var(--ac)' }}
-                            onClick={() => { setCampSubject(t.subject); setCampBody(t.body); }}>{t.label}</button>
-                    ))}
-                </div>
+      <div>
+        <div className="cmp-header">
+          <div>
+            <div className="cmp-breadcrumb">
+              <button onClick={() => setCampaignMode('list')}>← Retour aux campagnes</button>
             </div>
-
-            <div className="card" style={{ padding: 20, marginBottom: 14 }}>
-                <div className="card-t" style={{ marginBottom: 14 }}>Destinataires</div>
-                {allTags.length > 0 && (
-                    <div style={{ marginBottom: 12 }}>
-                        <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--tm)', marginBottom: 6 }}>Filtrer par tag</div>
-                        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-                            {allTags.map(tag => (
-                                <button key={tag} className="badge" style={{ cursor: 'pointer', border: 'none', fontFamily: 'var(--f)',
-                                    background: campFilterTags.includes(tag) ? 'var(--ac)' : 'var(--al)', color: campFilterTags.includes(tag) ? '#fff' : 'var(--ac)' }}
-                                    onClick={() => setCampFilterTags(prev => prev.includes(tag) ? prev.filter(t => t !== tag) : [...prev, tag])}>{tag}</button>
-                            ))}
-                        </div>
-                    </div>
-                )}
-                <div style={{ marginBottom: 12 }}>
-                    <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--tm)', marginBottom: 6 }}>Pas venu depuis (jours)</div>
-                    <input className="finp" type="number" style={{ width: 120, marginBottom: 0 }} placeholder="30"
-                        value={campNotSeen} onChange={e => setCampNotSeen(e.target.value)} />
-                </div>
-                <button className="ba" style={{ background: 'var(--bg)', color: 'var(--ts)', border: '1px solid var(--b)' }}
-                    onClick={previewCampaign}>Compter les destinataires</button>
-                {campPreviewCount !== null && (
-                    <div style={{ marginTop: 8, fontSize: 13, fontWeight: 700, color: 'var(--ac)' }}>{campPreviewCount} contacts correspondants</div>
-                )}
-            </div>
-
-            <div className="card" style={{ padding: 20, marginBottom: 14 }}>
-                <div className="card-t" style={{ marginBottom: 14 }}>Contenu</div>
-                <div className="finp-group">
-                    <div className="finp-label">Objet</div>
-                    <input className="finp" value={campSubject} onChange={e => setCampSubject(e.target.value)} placeholder="Objet de l'email" />
-                </div>
-                <div className="finp-group">
-                    <div className="finp-label">Message</div>
-                    <textarea className="dinp" rows={6} value={campBody} onChange={e => setCampBody(e.target.value)}
-                        placeholder="Bonjour {prenom}, ..." />
-                </div>
-                <div style={{ fontSize: 10, color: 'var(--tm)', marginTop: 4 }}>Variables : {'{prenom}'}, {'{restaurant}'}</div>
-            </div>
-
-            <button className="ba" style={{ padding: '12px 24px', fontSize: 14 }} onClick={sendCampaign}>Envoyer maintenant</button>
+            <h1>Nouvelle <span>campagne</span></h1>
+          </div>
+          <div className="cmp-resto-info">{restName} · {totalContacts} contact{totalContacts > 1 ? 's' : ''}</div>
         </div>
+
+        <div className="cmp-layout">
+          {/* LEFT COLUMN — 4 STEPS */}
+          <div>
+            {/* STEP 1 — Canal */}
+            <div className="cmp-step cmp-step-active">
+              <div className="cmp-step-header">
+                <div className="cmp-step-num s1">1</div>
+                <div>
+                  <div className="cmp-step-title">Choisissez le canal d'envoi</div>
+                  <div className="cmp-step-sub">Email, WhatsApp ou les deux — le message s'adapte automatiquement</div>
+                </div>
+              </div>
+              <div className="cmp-channel-grid">
+                <div className={`cmp-channel-card ${hasEmail ? 'selected' : ''}`} onClick={() => toggleChannel('email')}>
+                  <div className="cmp-channel-icon" style={{ background: 'rgba(45,125,210,.08)' }}>
+                    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#2D7DD2" strokeWidth="2"><rect x="2" y="4" width="20" height="16" rx="2"/><polyline points="22,6 12,13 2,6"/></svg>
+                  </div>
+                  <div className="cmp-channel-name">Email</div>
+                  <div className="cmp-channel-desc">Envoi à tous les contacts ayant un email</div>
+                  <div className="cmp-channel-price free">Inclus dans votre plan</div>
+                </div>
+                <div className={`cmp-channel-card ${hasWA ? 'selected' : ''}`} onClick={() => toggleChannel('whatsapp')}>
+                  <div className="cmp-channel-icon" style={{ background: 'rgba(37,211,102,.08)' }}>
+                    <svg width="22" height="22" viewBox="0 0 24 24" fill="#25D366"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347z"/></svg>
+                  </div>
+                  <div className="cmp-channel-name">WhatsApp</div>
+                  <div className="cmp-channel-desc">Message direct sur WhatsApp — fort taux d'ouverture</div>
+                  <div className="cmp-channel-price paid">0,15 € HT/message</div>
+                </div>
+                <div className={`cmp-channel-card ${hasEmail && hasWA ? 'selected' : ''}`} onClick={selectBoth}>
+                  <div className="cmp-channel-icon" style={{ background: 'rgba(78,205,196,.08)' }}>
+                    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#4ECDC4" strokeWidth="2"><path d="M22 11.08V12a10 10 0 11-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+                  </div>
+                  <div className="cmp-channel-name">Les deux</div>
+                  <div className="cmp-channel-desc">Email + WhatsApp pour un impact maximum</div>
+                  <div className="cmp-channel-price paid">Email gratuit + 0,15 € HT/WhatsApp</div>
+                </div>
+              </div>
+              {walletInsufficient && (
+                <div className="cmp-wallet-warn">
+                  ⚠️ Wallet WhatsApp insuffisant : il faut <strong>{fmtEur(waCostCents)} €</strong> pour {matchedWithWA} message(s), solde actuel <strong>{walletDisplay}</strong>. Réduisez la liste ou désélectionnez WhatsApp.
+                </div>
+              )}
+            </div>
+
+            {/* STEP 2 — Templates */}
+            <div className="cmp-step">
+              <div className="cmp-step-header">
+                <div className="cmp-step-num s2">2</div>
+                <div>
+                  <div className="cmp-step-title">Choisissez un template</div>
+                  <div className="cmp-step-sub">Sélectionnez un modèle ou écrivez votre propre message</div>
+                </div>
+              </div>
+              <div className="cmp-template-grid">
+                {campaignTemplates.map((t, i) => (
+                  <div key={i} className={`cmp-tpl-card ${campTemplate === i ? 'selected' : ''}`} onClick={() => pickTemplate(i)}>
+                    <div className="cmp-tpl-emoji">{t.emoji}</div>
+                    <div className="cmp-tpl-name">{t.label}</div>
+                    <div className="cmp-tpl-preview">{t.body}</div>
+                    <div className={`cmp-tpl-tag ${t.tagClass}`}>{t.tag}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* STEP 3 — Destinataires */}
+            <div className="cmp-step">
+              <div className="cmp-step-header">
+                <div className="cmp-step-num s3">3</div>
+                <div>
+                  <div className="cmp-step-title">Choisissez les destinataires</div>
+                  <div className="cmp-step-sub">Filtrez par tag ou par date de dernière visite</div>
+                </div>
+              </div>
+              <div className="cmp-filter-section">
+                <div className={`cmp-filter-chip ${!campFilterTags.length ? 'active' : ''}`} onClick={() => setCampFilterTags([])}>Tous ({totalContacts})</div>
+                {allTags.map(tag => (
+                  <div key={tag} className={`cmp-filter-chip ${campFilterTags.includes(tag) ? 'active' : ''}`}
+                    onClick={() => setCampFilterTags(prev => prev.includes(tag) ? prev.filter(t => t !== tag) : [...prev, tag])}>
+                    {tag}
+                  </div>
+                ))}
+              </div>
+              <div className="cmp-filter-range">
+                <label>Pas venu depuis</label>
+                <input type="range" min="0" max="90" value={campNotSeen} onChange={e => setCampNotSeen(parseInt(e.target.value))} />
+                <div className="cmp-range-val">{campNotSeen === 0 ? 'Tous' : campNotSeen + ' jours'}</div>
+              </div>
+              <div className="cmp-match-count">
+                <div className="num">{matched.length}</div>
+                <div className="label">
+                  contact{matched.length > 1 ? 's' : ''} correspond{matched.length > 1 ? 'ent' : ''} à vos filtres<br />
+                  <span className="sub">sur {totalContacts} contacts au total · {matchedWithEmail} avec email · {matchedWithWA} avec WhatsApp</span>
+                </div>
+              </div>
+            </div>
+
+            {/* STEP 4 — Message */}
+            <div className="cmp-step">
+              <div className="cmp-step-header">
+                <div className="cmp-step-num s4">4</div>
+                <div>
+                  <div className="cmp-step-title">Personnalisez le message</div>
+                  <div className="cmp-step-sub">Le contenu s'adapte au canal choisi</div>
+                </div>
+              </div>
+
+              {hasEmail && (
+                <div>
+                  <div className="cmp-subject-label">Objet <span className="cmp-email-only">📧 Email uniquement</span></div>
+                  <input ref={campSubjectRef} className="cmp-msg-subject" type="text" value={campSubject}
+                    onChange={e => setCampSubject(e.target.value)} placeholder="Objet de l'email" />
+                </div>
+              )}
+
+              <div style={{ marginTop: 4 }}>
+                <div className="cmp-subject-label" style={{ marginBottom: 6 }}>Message</div>
+                <textarea ref={campBodyRef} className="cmp-msg-field" value={campBody}
+                  onChange={e => setCampBody(e.target.value)} placeholder="Bonjour {prenom}, ..." />
+              </div>
+              <div className="cmp-variables-bar">
+                <span className="lbl">Insérer :</span>
+                <button type="button" className="cmp-var-btn" onClick={() => insertVar('{prenom}')}>{'{prenom}'}</button>
+                <button type="button" className="cmp-var-btn" onClick={() => insertVar('{restaurant}')}>{'{restaurant}'}</button>
+              </div>
+
+              <div className="cmp-cost-bar">
+                <div className="cmp-cost-icon">
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#4ECDC4" strokeWidth="2"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 000 7h5a3.5 3.5 0 010 7H6"/></svg>
+                </div>
+                <div className="cmp-cost-detail">
+                  <div className="cmp-cost-label">Coût estimé de cette campagne</div>
+                  <div className="cmp-cost-val">{costMain}{costParts.length > 0 && <span className="sub">({costParts.join(' + ')})</span>}</div>
+                </div>
+              </div>
+
+              <div className="cmp-send-area">
+                <button className="cmp-btn-send" onClick={sendCampaign} disabled={walletInsufficient || matched.length === 0}>
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M22 2L11 13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+                  Envoyer à {matched.length} contact{matched.length > 1 ? 's' : ''}
+                </button>
+                <div className="cmp-send-note">
+                  Email : envoi instantané et gratuit.<br />
+                  WhatsApp : débité de votre wallet prépayé.
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* RIGHT SIDEBAR */}
+          <div className="cmp-sidebar">
+            {/* Stats */}
+            <div className="cmp-side-card">
+              <h3>Votre base contacts</h3>
+              <div className="cmp-stat-row"><span className="cmp-stat-label">Total contacts</span><span className="cmp-stat-val highlight">{totalContacts}</span></div>
+              <div className="cmp-stat-row"><span className="cmp-stat-label">Avec email</span><span className="cmp-stat-val">{totalEmail}</span></div>
+              <div className="cmp-stat-row"><span className="cmp-stat-label">Avec WhatsApp</span><span className="cmp-stat-val">{totalWA}</span></div>
+              <div className="cmp-stat-row"><span className="cmp-stat-label">Tags VIP</span><span className="cmp-stat-val">{totalVIP}</span></div>
+              <div className="cmp-stat-row"><span className="cmp-stat-label">{'Pas venu > 30j'}</span><span className="cmp-stat-val">{totalNotSeen30}</span></div>
+              <div className="cmp-stat-row">
+                <span className="cmp-stat-label">Wallet WhatsApp</span>
+                <span className={`cmp-stat-val ${walletEmpty ? 'dim' : 'green'}`}>{walletDisplay}</span>
+              </div>
+              {walletEmpty && <a className="cmp-recharge-link" href="#" onClick={e => e.preventDefault()}>Recharger (bientôt)</a>}
+            </div>
+
+            {/* Preview */}
+            <div className="cmp-side-card" style={{ padding: 14 }}>
+              <h3 style={{ marginBottom: 10 }}>Aperçu</h3>
+              <div className="cmp-preview-tabs">
+                <button className={`cmp-preview-tab ${campPreviewTab === 'whatsapp' ? 'active' : ''}`} onClick={() => setCampPreviewTab('whatsapp')}>
+                  <svg viewBox="0 0 24 24" fill="#25D366"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347z"/></svg>
+                  WhatsApp
+                </button>
+                <button className={`cmp-preview-tab ${campPreviewTab === 'email' ? 'active' : ''}`} onClick={() => setCampPreviewTab('email')}>
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="2" y="4" width="20" height="16" rx="2"/><polyline points="22,6 12,13 2,6"/></svg>
+                  Email
+                </button>
+              </div>
+
+              {campPreviewTab === 'whatsapp' ? (
+                <div className="cmp-phone">
+                  <div className="cmp-phone-header">
+                    <div className="cmp-phone-avatar">{restInitials}</div>
+                    <div className="cmp-phone-name">{restName}</div>
+                  </div>
+                  <div className="cmp-phone-body">
+                    <div className="cmp-wa-bubble">
+                      {previewBody}
+                      <div className="cmp-wa-time">{new Date().toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })} ✓✓</div>
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <div className="cmp-email">
+                  <div className="cmp-email-toolbar">
+                    <div className="dot" style={{ background: '#EF4444' }}></div>
+                    <div className="dot" style={{ background: '#F59E0B' }}></div>
+                    <div className="dot" style={{ background: '#22C55E' }}></div>
+                    <span style={{ marginLeft: 8, fontSize: 10, color: 'var(--tm)' }}>Boîte de réception</span>
+                  </div>
+                  <div className="cmp-email-meta">
+                    <div className="cmp-email-meta-row"><strong>De :</strong> {restName} &lt;contact@guestscale.com&gt;</div>
+                    <div className="cmp-email-meta-row"><strong>À :</strong> {sampleEmail}</div>
+                    <div className="cmp-email-meta-row"><strong>Objet :</strong> {previewSubject}</div>
+                  </div>
+                  <div className="cmp-email-body">
+                    <div className="cmp-email-logo">
+                      <div className="cmp-email-dot" style={{ background: '#2D7DD2' }}></div>
+                      <div className="cmp-email-dot" style={{ background: '#4ECDC4' }}></div>
+                      <div className="cmp-email-name">{restName}</div>
+                    </div>
+                    <div>{previewBody}</div>
+                    <div className="cmp-email-footer">
+                      Envoyé via GuestScale · <a href="#" onClick={e => e.preventDefault()}>Se désinscrire</a>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Recipients */}
+            <div className="cmp-side-card">
+              <h3>Destinataires ({matched.length} sélectionné{matched.length > 1 ? 's' : ''})</h3>
+              <div className="cmp-contact-list">
+                {matched.length === 0 ? (
+                  <div className="cmp-contact-empty">Aucun contact ne correspond à vos filtres</div>
+                ) : matched.map((c, i) => {
+                  const name = c.name || c.phone || 'Inconnu';
+                  return (
+                    <div key={c.phone || i} className="cmp-contact-item">
+                      <div className="cmp-contact-avatar" style={{ background: avatarColor(name) }}>{initials(name)}</div>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div className="cmp-contact-name">{name}</div>
+                        {(c.tags || []).length > 0 && (
+                          <div className="cmp-contact-tags">
+                            {(c.tags || []).slice(0, 3).map(t => <span key={t} className="cmp-contact-tag">{t}</span>)}
+                          </div>
+                        )}
+                      </div>
+                      <div className="cmp-contact-channels">
+                        {c.phone && <div className="cmp-contact-ch" style={{ background: 'rgba(37,211,102,.1)' }} title="WhatsApp"><svg width="10" height="10" viewBox="0 0 24 24" fill="#25D366"><circle cx="12" cy="12" r="10"/></svg></div>}
+                        {c.email && <div className="cmp-contact-ch" style={{ background: 'rgba(45,125,210,.1)' }} title="Email"><svg width="10" height="10" viewBox="0 0 24 24" fill="#2D7DD2"><circle cx="12" cy="12" r="10"/></svg></div>}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* History */}
+            <div className="cmp-side-card">
+              <h3>Dernières campagnes</h3>
+              {lastCampaigns.length === 0 ? (
+                <div className="cmp-history-empty">Aucune campagne envoyée pour le moment</div>
+              ) : lastCampaigns.map(c => (
+                <div key={c.id} className="cmp-history-item">
+                  <div className="cmp-history-dot"></div>
+                  <div className="cmp-history-info">
+                    <div className="cmp-history-name">{c.template || c.subject || 'Campagne'}</div>
+                    <div className="cmp-history-meta">{fmtCampDate(c.date)} · {c.sent || 0} dest. · <span>{campChannelsIcons(c)}</span></div>
+                  </div>
+                  <div className="cmp-history-stat">{c.sent || 0}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      </div>
     );
   }
 
