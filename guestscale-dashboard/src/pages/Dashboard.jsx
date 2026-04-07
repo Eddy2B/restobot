@@ -2879,7 +2879,7 @@ export default function Dashboard() {
       return (Date.now() - new Date(c.last_seen).getTime()) > 30 * 86400000;
     }).length;
 
-    const restName = restaurantConfig?.name || state.user?.restaurant_name || 'Restaurant';
+    const restName = state.restaurantConfig?.name || state.user?.restaurant_name || 'Restaurant';
     const restInitials = restName.split(' ').map(w => w[0]).slice(0, 2).join('').toUpperCase();
 
     // Channel logic
