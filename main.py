@@ -8840,7 +8840,9 @@ var currentTab='general';
 document.getElementById('loginBtn').onclick=doLogin;
 document.getElementById('secretInput').onkeydown=function(e){if(e.key==='Enter')doLogin()};
 function doLogin(fromStorage){
-  if(!fromStorage){
+  // IMPORTANT : strict equality. Le bouton onclick passe un MouseEvent en
+  // 1er arg, qui est truthy mais !== true → on lit bien l'input dans ce cas.
+  if(fromStorage!==true){
     secret=document.getElementById('secretInput').value.trim();
   }
   if(!secret){document.getElementById('loginError').style.display='block';return}
@@ -8849,7 +8851,7 @@ function doLogin(fromStorage){
       // Stale secret in sessionStorage : purge silently and let user retype
       sessionStorage.removeItem('gs_admin_secret');
       secret='';
-      if(!fromStorage){document.getElementById('loginError').style.display='block'}
+      if(fromStorage!==true){document.getElementById('loginError').style.display='block'}
       return;
     }
     return r.json();
@@ -8860,7 +8862,7 @@ function doLogin(fromStorage){
     document.getElementById('app').classList.add('v');
     loadAll();setInterval(loadAll,15000);
   }).catch(function(){
-    if(!fromStorage){document.getElementById('loginError').style.display='block'}
+    if(fromStorage!==true){document.getElementById('loginError').style.display='block'}
     sessionStorage.removeItem('gs_admin_secret');
     secret='';
   });
