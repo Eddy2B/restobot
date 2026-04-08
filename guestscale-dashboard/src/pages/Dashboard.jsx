@@ -654,7 +654,7 @@ export default function Dashboard() {
         body: JSON.stringify({ reminders_enabled: !current })
       });
       dispatch({ type: 'SET_CONFIG', payload: { _reminders_enabled: !current } });
-      showToast(current ? 'Rappels desactives' : 'Rappels actives');
+      showToast(current ? 'Rappels désactivés' : 'Rappels activés');
       await fetchData();
     } catch { showToast('Erreur'); }
   }
@@ -987,7 +987,7 @@ export default function Dashboard() {
             </div>
             <div style={{ fontSize: 12, color: 'var(--ts)' }}>
               {usageData.messages_sent} / {usageData.messages_included} messages IA ({usageData.usage_percent}%)
-              {usageData.messages_overage > 0 && <span style={{ color: '#EF4444', fontWeight: 600 }}> — {usageData.messages_overage} en depassement ({usageData.overage_cost}&#8364;)</span>}
+              {usageData.messages_overage > 0 && <span style={{ color: '#EF4444', fontWeight: 600 }}> — {usageData.messages_overage} en dépassement ({usageData.overage_cost}&#8364;)</span>}
             </div>
           </div>
         )}
@@ -1207,7 +1207,7 @@ export default function Dashboard() {
 
     const STATUS_COLORS = {
       available: { border: '#10B981', bg: 'rgba(16,185,129,.08)', label: 'Libre', icon: '' },
-      reserved: { border: '#2D7DD2', bg: 'rgba(45,125,210,.12)', label: 'Reserve', icon: '\u{1F550}' },
+      reserved: { border: '#2D7DD2', bg: 'rgba(45,125,210,.12)', label: 'Réservée', icon: '\u{1F550}' },
       seated: { border: '#F59E0B', bg: 'rgba(245,158,11,.12)', label: 'A table', icon: '\u{1F37D}' },
       dessert: { border: '#EAB308', bg: 'rgba(234,179,8,.1)', label: 'Dessert', icon: '\u{1F370}' },
       done: { border: '#6B7280', bg: 'rgba(107,114,128,.1)', label: 'Termine', icon: '\u2713' },
@@ -2319,7 +2319,7 @@ export default function Dashboard() {
               <div className="phi">&#128100;</div>
               <div style={{ fontSize: 14, fontWeight: 600 }}>Aucun contact</div>
               <div style={{ fontSize: 12, color: 'var(--tm)', marginTop: 4, maxWidth: 340, margin: '4px auto' }}>
-                Vos contacts apparaitront ici des qu&apos;un client reservera via WhatsApp ou le chat web.
+                Vos contacts apparaîtront ici dès qu&apos;un client réservera via WhatsApp ou le chat web.
               </div>
             </div>
           )}
@@ -2662,7 +2662,7 @@ export default function Dashboard() {
                 await apiFetch('/api/toggle-ai', { method: 'POST', body: JSON.stringify({ enabled }) });
                 dispatch({ type: 'SET_CONFIG', payload: { ai_enabled: enabled } });
                 await fetchData();
-                showToast(enabled ? 'IA activee' : 'IA desactivee');
+                showToast(enabled ? 'IA activée' : 'IA désactivée');
               }}>
               <div className="togd" />
             </div>
@@ -2899,7 +2899,7 @@ export default function Dashboard() {
                         <div key={h.month} className="cfr">
                             <div><div className="cfl">{formatMonthFr(h.month)}</div><div className="cfd">{h.messages_sent} messages</div></div>
                             <div style={{ textAlign: 'right' }}>
-                                {h.overage > 0 ? <span style={{ color: '#EF4444', fontSize: 12, fontWeight: 600 }}>{h.overage} depassement ({h.cost}&#8364;)</span>
+                                {h.overage > 0 ? <span style={{ color: '#EF4444', fontSize: 12, fontWeight: 600 }}>{h.overage} dépassement ({h.cost}&#8364;)</span>
                                     : <span style={{ color: 'var(--ok)', fontSize: 12 }}>Inclus</span>}
                             </div>
                         </div>
@@ -3693,7 +3693,7 @@ export default function Dashboard() {
                           const r = await apiFetch('/api/stripe/portal', { method: 'POST', body: '{}' });
                           const d = await r.json();
                           if (d.portal_url) window.location.href = d.portal_url;
-                        }}>Gerer mon abonnement</button>
+                        }}>Gérer mon abonnement</button>
                     </div>
                   </div>
                 ) : (
@@ -3703,7 +3703,7 @@ export default function Dashboard() {
                         const r = await apiFetch('/api/stripe/portal', { method: 'POST', body: '{}' });
                         const d = await r.json();
                         if (d.portal_url) window.location.href = d.portal_url;
-                      }}>Gerer mon abonnement</button>
+                      }}>Gérer mon abonnement</button>
                     <button type="button"
                       style={{
                         border: '1.5px solid #EF4444', color: '#EF4444', background: 'transparent',
@@ -3732,7 +3732,7 @@ export default function Dashboard() {
             ) : subscription.trial_expired ? (
               <div>
                 <div style={{ padding: 12, background: '#FEF3C7', borderRadius: 8, marginBottom: 12, fontSize: 13, color: '#92400E', fontWeight: 600 }}>
-                  Votre essai gratuit est termine. Choisissez un plan pour continuer.
+                  Votre essai gratuit est terminé. Choisissez un plan pour continuer.
                 </div>
                 <div style={{ display: 'flex', gap: 10 }}>
                   <button className="ba" onClick={async () => {

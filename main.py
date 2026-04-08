@@ -3377,7 +3377,7 @@ function renderPage(id){
 function renderAccount(c){
   var u=USER_DATA||{};
   var h='';
-  h+='<div class="card" style="padding:24px;margin-bottom:16px"><div class="cfs"><div class="cft">Informations du compte</div><div class="cfsb">Gerez votre compte et votre abonnement</div>';
+  h+='<div class="card" style="padding:24px;margin-bottom:16px"><div class="cfs"><div class="cft">Informations du compte</div><div class="cfsb">Gérez votre compte et votre abonnement</div>';
   h+='<div class="cfr"><div><div class="cfl">Email</div><div class="cfd">'+(u.email||'—')+'</div></div></div>';
   h+='<div class="cfr"><div><div class="cfl">Nom</div><div class="cfd">'+(u.first_name||'')+' '+(u.last_name||'')+'</div></div></div>';
   h+='<div class="cfr"><div><div class="cfl">Restaurant</div><div class="cfd">'+(u.restaurant_name||'—')+'</div></div></div>';
@@ -6006,10 +6006,10 @@ async def api_reset_password(request: Request):
 
     token_data = password_reset_tokens.get(code)
     if not token_data:
-        return JSONResponse(status_code=401, content={"error": "Code invalide ou expire"})
+        return JSONResponse(status_code=401, content={"error": "Code invalide ou expiré"})
     if time_mod.time() > token_data["expires"]:
         password_reset_tokens.pop(code, None)
-        return JSONResponse(status_code=401, content={"error": "Code expire. Veuillez en demander un nouveau."})
+        return JSONResponse(status_code=401, content={"error": "Code expiré. Veuillez en demander un nouveau."})
 
     email = token_data["email"]
     password_reset_tokens.pop(code, None)
