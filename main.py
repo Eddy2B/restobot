@@ -448,6 +448,20 @@ async def init_db():
                     created_at TIMESTAMPTZ DEFAULT NOW()
                 );
                 CREATE INDEX IF NOT EXISTS idx_mt_waitlist_rid ON mt_waitlist(restaurant_id, wait_date, status);
+
+                CREATE TABLE IF NOT EXISTS mt_wallet_transactions (
+                    id SERIAL PRIMARY KEY,
+                    restaurant_id UUID NOT NULL REFERENCES restaurants(id),
+                    txn_type TEXT NOT NULL,
+                    amount_cents INTEGER NOT NULL,
+                    balance_after_cents INTEGER NOT NULL,
+                    description TEXT DEFAULT '',
+                    stripe_session_id TEXT,
+                    campaign_id TEXT,
+                    created_at TIMESTAMPTZ DEFAULT NOW()
+                );
+                CREATE INDEX IF NOT EXISTS idx_mt_wallet_txn_rid ON mt_wallet_transactions(restaurant_id, created_at DESC);
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_mt_wallet_txn_stripe ON mt_wallet_transactions(stripe_session_id) WHERE stripe_session_id IS NOT NULL;
             """)
         logger.info("Database connected, multi-tenant tables ready")
     except Exception as e:
@@ -6554,22 +6568,96 @@ async def api_campaign_preview(request: Request):
     return {"count": len(matched)}
 
 WHATSAPP_BROADCAST_COST_CENTS = 15  # 0,15 € HT par message WhatsApp campagne
+WALLET_TOPUP_AMOUNTS_CENTS = (500, 1000, 2500, 5000)  # 5 €, 10 €, 25 €, 50 €
 
 def get_wallet_cents(rid: str) -> int:
     rest = restaurants_cache.get(rid, {})
     return int(rest.get("settings", {}).get("wallet_balance_cents", 0) or 0)
 
-async def debit_wallet(rid: str, amount_cents: int) -> bool:
+async def _log_wallet_txn(rid: str, txn_type: str, amount_cents: int, balance_after: int,
+                          description: str = "", stripe_session_id: str = None, campaign_id: str = None):
+    if not db_pool:
+        return
+    try:
+        async with db_pool.acquire() as conn:
+            await conn.execute("""
+                INSERT INTO mt_wallet_transactions
+                (restaurant_id, txn_type, amount_cents, balance_after_cents, description, stripe_session_id, campaign_id)
+                VALUES ($1::uuid, $2, $3, $4, $5, $6, $7)
+                ON CONFLICT (stripe_session_id) DO NOTHING
+            """, rid, txn_type, amount_cents, balance_after, description, stripe_session_id, campaign_id)
+    except Exception as e:
+        logger.error(f"Wallet txn log error: {e}")
+
+async def credit_wallet(rid: str, amount_cents: int, description: str = "Recharge",
+                        stripe_session_id: str = None) -> bool:
+    """Crédite le wallet et journalise la transaction. Idempotent via stripe_session_id."""
     rest = restaurants_cache.get(rid)
-    if not rest:
+    if not rest or amount_cents <= 0:
+        return False
+    # Idempotency: skip if this session was already credited
+    if stripe_session_id and db_pool:
+        try:
+            async with db_pool.acquire() as conn:
+                existing = await conn.fetchval(
+                    "SELECT 1 FROM mt_wallet_transactions WHERE stripe_session_id = $1",
+                    stripe_session_id,
+                )
+                if existing:
+                    logger.info(f"Wallet topup already processed for session {stripe_session_id}")
+                    return False
+        except Exception as e:
+            logger.error(f"Wallet idempotency check error: {e}")
+    settings = rest.setdefault("settings", {})
+    current = int(settings.get("wallet_balance_cents", 0) or 0)
+    new_balance = current + amount_cents
+    settings["wallet_balance_cents"] = new_balance
+    await db_save_restaurant(rid, rest)
+    await _log_wallet_txn(rid, "topup", amount_cents, new_balance, description, stripe_session_id=stripe_session_id)
+    bump_version(rid)
+    return True
+
+async def debit_wallet(rid: str, amount_cents: int, description: str = "",
+                       campaign_id: str = None) -> bool:
+    """Débite le wallet et journalise. Retourne False si solde insuffisant."""
+    rest = restaurants_cache.get(rid)
+    if not rest or amount_cents <= 0:
         return False
     settings = rest.setdefault("settings", {})
     current = int(settings.get("wallet_balance_cents", 0) or 0)
     if current < amount_cents:
         return False
-    settings["wallet_balance_cents"] = current - amount_cents
+    new_balance = current - amount_cents
+    settings["wallet_balance_cents"] = new_balance
     await db_save_restaurant(rid, rest)
+    if description or campaign_id:
+        await _log_wallet_txn(rid, "debit", -amount_cents, new_balance, description, campaign_id=campaign_id)
     return True
+
+
+async def get_wallet_transactions(rid: str, limit: int = 10) -> list:
+    if not db_pool:
+        return []
+    try:
+        async with db_pool.acquire() as conn:
+            rows = await conn.fetch("""
+                SELECT txn_type, amount_cents, balance_after_cents, description, created_at
+                FROM mt_wallet_transactions
+                WHERE restaurant_id = $1::uuid
+                ORDER BY created_at DESC
+                LIMIT $2
+            """, rid, limit)
+            return [{
+                "type": r["txn_type"],
+                "amount_cents": r["amount_cents"],
+                "amount_eur": round(r["amount_cents"] / 100, 2),
+                "balance_after_cents": r["balance_after_cents"],
+                "description": r["description"] or "",
+                "date": r["created_at"].isoformat() if r["created_at"] else "",
+            } for r in rows]
+    except Exception as e:
+        logger.error(f"Wallet txn fetch error: {e}")
+        return []
 
 
 @app.get("/api/wallet")
@@ -6579,8 +6667,61 @@ async def api_get_wallet(request: Request):
         return Response(status_code=401)
     rid = auth["restaurant_id"]
     cents = get_wallet_cents(rid)
-    return {"balance_cents": cents, "balance_eur": round(cents / 100, 2),
-            "wa_msg_cost_cents": WHATSAPP_BROADCAST_COST_CENTS}
+    txns = await get_wallet_transactions(rid, limit=10)
+    return {
+        "balance_cents": cents,
+        "balance_eur": round(cents / 100, 2),
+        "wa_msg_cost_cents": WHATSAPP_BROADCAST_COST_CENTS,
+        "topup_amounts_cents": list(WALLET_TOPUP_AMOUNTS_CENTS),
+        "transactions": txns,
+    }
+
+
+@app.post("/api/wallet/checkout")
+async def api_wallet_checkout(request: Request):
+    auth = get_auth(request)
+    if not auth:
+        return Response(status_code=401)
+    if not stripe_mod.api_key:
+        return JSONResponse(status_code=503, content={"error": "Stripe non configuré"})
+    rid = auth["restaurant_id"]
+    data = await request.json()
+    try:
+        amount_cents = int(data.get("amount_cents", 0))
+    except (TypeError, ValueError):
+        amount_cents = 0
+    if amount_cents not in WALLET_TOPUP_AMOUNTS_CENTS:
+        return JSONResponse(status_code=400, content={"error": "Montant non autorisé"})
+    rest = restaurants_cache.get(rid, {})
+    rest_name = rest.get("name", "Restaurant")
+    amount_eur = amount_cents / 100
+    try:
+        session = stripe_mod.checkout.Session.create(
+            payment_method_types=["card"],
+            mode="payment",
+            line_items=[{
+                "price_data": {
+                    "currency": "eur",
+                    "unit_amount": amount_cents,
+                    "product_data": {
+                        "name": f"Recharge wallet WhatsApp — {amount_eur:.0f} €",
+                        "description": f"Crédit campagnes WhatsApp GuestScale ({rest_name})",
+                    },
+                },
+                "quantity": 1,
+            }],
+            metadata={
+                "type": "wallet_topup",
+                "restaurant_id": rid,
+                "amount_cents": str(amount_cents),
+            },
+            success_url=f"https://{APP_DOMAIN}/dashboard?p=campaigns&wallet=success",
+            cancel_url=f"https://{APP_DOMAIN}/dashboard?p=campaigns&wallet=cancel",
+        )
+        return {"checkout_url": session.url}
+    except Exception as e:
+        logger.error(f"Stripe wallet checkout error: {e}")
+        return JSONResponse(status_code=500, content={"error": "Erreur Stripe"})
 
 
 @app.post("/api/campaigns/send")
@@ -6624,6 +6765,7 @@ async def api_campaign_send(request: Request):
     sent_wa = 0
     wa_phone_id = rest.get("whatsapp_phone_number_id", "")
     wa_token = rest.get("whatsapp_access_token", "")
+    campaign_id_local = f"C{len(campaigns_store.get(rid, []))+1}"
     for ct in matched:
         ct_name = (ct.get("name") or "").split()[0] if ct.get("name") else ""
         text_body = body.replace("{prenom}", ct_name).replace("{restaurant}", rest_name)
@@ -6643,25 +6785,30 @@ async def api_campaign_send(request: Request):
                         sent_email += 1
                 except Exception as e:
                     logger.error(f"Campaign email error: {e}")
-        # WhatsApp
+        # WhatsApp (no per-message debit — aggregated below)
         if "whatsapp" in channels:
             ct_phone = ct.get("phone")
             if ct_phone and wa_phone_id and wa_token:
+                # Re-check wallet at each message to avoid overdraft if pre-flight is stale
+                if get_wallet_cents(rid) < (sent_wa + 1) * WHATSAPP_BROADCAST_COST_CENTS:
+                    logger.warning(f"Wallet drained mid-campaign: {rid}")
+                    break
                 try:
                     await send_whatsapp_message(wa_phone_id, wa_token, ct_phone, text_body)
-                    debited = await debit_wallet(rid, WHATSAPP_BROADCAST_COST_CENTS)
-                    if debited:
-                        sent_wa += 1
-                        await increment_message_count(rid, "broadcast")
-                    else:
-                        logger.warning(f"Wallet drained mid-campaign: {rid}")
-                        break
+                    sent_wa += 1
+                    await increment_message_count(rid, "broadcast")
                 except Exception as e:
                     logger.error(f"Campaign WhatsApp error: {e}")
 
+    # Single aggregated debit for the whole campaign (one row in mt_wallet_transactions)
+    if sent_wa > 0:
+        total_cost = sent_wa * WHATSAPP_BROADCAST_COST_CENTS
+        debit_desc = f"Campagne « {template_label or subject or 'sans nom'} » — {sent_wa} WhatsApp"
+        await debit_wallet(rid, total_cost, description=debit_desc, campaign_id=campaign_id_local)
+
     sent_count = sent_email + sent_wa
     campaign = {
-        "id": f"C{len(campaigns_store.get(rid, []))+1}",
+        "id": campaign_id_local,
         "subject": subject,
         "template": template_label,
         "channels": channels,
@@ -9142,10 +9289,32 @@ async def api_stripe_webhook(request: Request):
     etype = event.get("type", "")
     obj = event.get("data", {}).get("object", {})
     if etype == "checkout.session.completed":
-        rid = obj.get("metadata", {}).get("restaurant_id")
-        plan = obj.get("metadata", {}).get("plan", "founder")
-        sub_id = obj.get("subscription")
-        if rid:
+        meta = obj.get("metadata", {}) or {}
+        rid = meta.get("restaurant_id")
+        if not rid:
+            return {"status": "ok"}
+        meta_type = meta.get("type", "subscription")
+        if meta_type == "wallet_topup":
+            # Wallet recharge — credit balance and log transaction (idempotent)
+            try:
+                amount_cents = int(meta.get("amount_cents", 0))
+            except (TypeError, ValueError):
+                amount_cents = 0
+            session_id = obj.get("id", "")
+            if amount_cents > 0:
+                ok = await credit_wallet(
+                    rid, amount_cents,
+                    description=f"Recharge Stripe ({amount_cents/100:.2f} €)",
+                    stripe_session_id=session_id,
+                )
+                if ok:
+                    logger.info(f"Stripe: wallet topup +{amount_cents}c for {rid[:8]}... session={session_id[:20]}")
+                else:
+                    logger.info(f"Stripe: wallet topup skipped (already processed) session={session_id[:20]}")
+        else:
+            # Subscription activation (existing flow)
+            plan = meta.get("plan", "founder")
+            sub_id = obj.get("subscription")
             set_restaurant_stripe_config(rid, "stripe_subscription_id", sub_id)
             set_restaurant_stripe_config(rid, "subscription_plan", plan)
             set_restaurant_stripe_config(rid, "subscription_status", "active")

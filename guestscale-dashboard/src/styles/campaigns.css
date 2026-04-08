@@ -99,8 +99,19 @@
 .cmp-stat-val { font-size: 15px; font-weight: 700; color: var(--t); }
 .cmp-stat-val.highlight { color: var(--ac); }
 .cmp-stat-val.green { color: #22C55E; }
+.cmp-stat-val.orange { color: #F59E0B; }
 .cmp-stat-val.dim { color: var(--tm); }
-.cmp-recharge-link { display: block; margin-top: 8px; font-size: 11px; color: var(--ac); text-align: right; cursor: not-allowed; opacity: .6; }
+.cmp-recharge-btn { display: block; width: 100%; margin-top: 12px; padding: 10px 14px; border-radius: 10px; border: 1.5px solid var(--ac); background: rgba(78,205,196,.06); color: var(--ac); font-family: var(--f); font-size: 13px; font-weight: 700; cursor: pointer; transition: all .15s; }
+.cmp-recharge-btn:hover { background: var(--ac); color: #fff; }
+
+/* Topup grid (recharge modal) */
+.cmp-topup-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; }
+.cmp-topup-card { padding: 18px 14px; border-radius: 12px; border: 2px solid #E2E8F0; background: #fff; cursor: pointer; transition: all .15s; font-family: var(--f); text-align: center; position: relative; }
+.cmp-topup-card:hover:not(:disabled) { border-color: #4ECDC4; transform: translateY(-2px); box-shadow: 0 6px 18px rgba(78,205,196,.18); }
+.cmp-topup-card:disabled { opacity: .5; cursor: not-allowed; }
+.cmp-topup-amount { font-size: 22px; font-weight: 800; color: #1E293B; }
+.cmp-topup-msg { font-size: 11px; color: #64748B; margin-top: 4px; font-weight: 500; }
+.cmp-topup-loading { font-size: 10px; color: #4ECDC4; margin-top: 6px; font-weight: 600; }
 
 /* Preview tabs */
 .cmp-preview-tabs { display: flex; gap: 0; margin-bottom: 12px; border-radius: 10px; overflow: hidden; border: 1px solid var(--b); }

@@ -195,9 +195,11 @@ export default function Dashboard() {
   const [campChannels, setCampChannels] = useState(['email']); // ['email'], ['whatsapp'], or both
   const [campTemplate, setCampTemplate] = useState(null); // index of selected template
   const [campPreviewTab, setCampPreviewTab] = useState('whatsapp'); // 'whatsapp' | 'email'
-  const [campWallet, setCampWallet] = useState({ balance_cents: 0, balance_eur: 0, wa_msg_cost_cents: 15 });
+  const [campWallet, setCampWallet] = useState({ balance_cents: 0, balance_eur: 0, wa_msg_cost_cents: 15, topup_amounts_cents: [500, 1000, 2500, 5000] });
   const [campConfirmOpen, setCampConfirmOpen] = useState(false);
   const [campSending, setCampSending] = useState(false);
+  const [campRechargeOpen, setCampRechargeOpen] = useState(false);
+  const [campRechargeLoading, setCampRechargeLoading] = useState(null); // amount_cents in flight
   const campSubjectRef = useRef(null);
   const campBodyRef = useRef(null);
 
@@ -682,8 +684,31 @@ export default function Dashboard() {
         balance_cents: d.balance_cents || 0,
         balance_eur: d.balance_eur || 0,
         wa_msg_cost_cents: d.wa_msg_cost_cents || 15,
+        topup_amounts_cents: d.topup_amounts_cents || [500, 1000, 2500, 5000],
+        transactions: d.transactions || [],
       });
     } catch {}
+  }
+
+  async function startWalletTopup(amountCents) {
+    setCampRechargeLoading(amountCents);
+    try {
+      const r = await apiFetch('/api/wallet/checkout', {
+        method: 'POST',
+        body: JSON.stringify({ amount_cents: amountCents }),
+      });
+      const d = await r.json();
+      if (!r.ok || !d.checkout_url) {
+        showToast(d.error || 'Erreur Stripe');
+        setCampRechargeLoading(null);
+        return;
+      }
+      // Full redirect to Stripe Checkout (returns to ?wallet=success or cancel)
+      window.location.href = d.checkout_url;
+    } catch {
+      showToast('Erreur réseau');
+      setCampRechargeLoading(null);
+    }
   }
 
   // Client-side filter mirror of backend _filter_contacts
@@ -847,6 +872,22 @@ export default function Dashboard() {
     if (page === 'usage') apiFetch('/api/usage').then(r => r.ok ? r.json() : null).then(u => { if (u) setUsageData(u); }).catch(() => {});
     if (page === 'campaigns') { loadCampaigns(); loadWallet(); }
   }, [page, statsRange]);
+
+  // ---- Stripe wallet topup return handling ----
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const walletStatus = params.get('wallet');
+    if (!walletStatus) return;
+    if (walletStatus === 'success') {
+      showToast('Wallet rechargé avec succès !');
+      loadWallet();
+    } else if (walletStatus === 'cancel') {
+      showToast('Rechargement annulé');
+    }
+    params.delete('wallet');
+    const qs = params.toString();
+    window.history.replaceState(null, '', qs ? '?' + qs : window.location.pathname);
+  }, []);
 
   // ---- Account ----
   async function changePassword() {
@@ -2914,7 +2955,8 @@ export default function Dashboard() {
     const waCostCents = hasWA ? matchedWithWA * (campWallet.wa_msg_cost_cents || 15) : 0;
     const walletInsufficient = hasWA && waCostCents > campWallet.balance_cents;
     const walletEmpty = campWallet.balance_cents === 0;
-    const walletDisplay = walletEmpty ? '— €' : (campWallet.balance_eur.toFixed(2).replace('.', ',') + ' €');
+    const walletDisplay = (campWallet.balance_eur || 0).toFixed(2).replace('.', ',') + ' €';
+    const topupAmounts = campWallet.topup_amounts_cents || [500, 1000, 2500, 5000];
 
     // Cost string
     function fmtEur(cents) { return (cents / 100).toFixed(2).replace('.', ','); }
@@ -3154,9 +3196,11 @@ export default function Dashboard() {
               <div className="cmp-stat-row"><span className="cmp-stat-label">{'Pas venu > 30j'}</span><span className="cmp-stat-val">{totalNotSeen30}</span></div>
               <div className="cmp-stat-row">
                 <span className="cmp-stat-label">Wallet WhatsApp</span>
-                <span className={`cmp-stat-val ${walletEmpty ? 'dim' : 'green'}`}>{walletDisplay}</span>
+                <span className={`cmp-stat-val ${walletEmpty ? 'orange' : 'green'}`}>{walletDisplay}</span>
               </div>
-              {walletEmpty && <a className="cmp-recharge-link" href="#" onClick={e => e.preventDefault()}>Recharger (bientôt)</a>}
+              <button type="button" className="cmp-recharge-btn" onClick={() => setCampRechargeOpen(true)}>
+                Recharger
+              </button>
             </div>
 
             {/* Preview */}
@@ -3299,6 +3343,44 @@ export default function Dashboard() {
                 </button>
                 <button type="button" className="cmp-modal-btn confirm" onClick={confirmSendCampaign} disabled={campSending}>
                   {campSending ? 'Envoi en cours…' : 'Confirmer l\u2019envoi'}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* RECHARGE MODAL */}
+        {campRechargeOpen && (
+          <div className="cmp-modal-overlay" onClick={() => !campRechargeLoading && setCampRechargeOpen(false)}>
+            <div className="cmp-modal-card" onClick={e => e.stopPropagation()}>
+              <div className="cmp-modal-title">Recharger votre wallet WhatsApp</div>
+              <div style={{ fontSize: 13, color: '#64748B', marginBottom: 18, lineHeight: 1.6 }}>
+                Solde actuel : <strong style={{ color: '#1E293B' }}>{walletDisplay}</strong> · Tarif : 0,15 € HT par message envoyé
+              </div>
+              <div className="cmp-topup-grid">
+                {topupAmounts.map(cents => {
+                  const eur = cents / 100;
+                  const messages = Math.floor(cents / (campWallet.wa_msg_cost_cents || 15));
+                  const isLoading = campRechargeLoading === cents;
+                  return (
+                    <button key={cents} type="button" className="cmp-topup-card"
+                      onClick={() => startWalletTopup(cents)}
+                      disabled={!!campRechargeLoading}>
+                      <div className="cmp-topup-amount">{eur} €</div>
+                      <div className="cmp-topup-msg">≈ {messages} messages</div>
+                      {isLoading && <div className="cmp-topup-loading">Redirection…</div>}
+                    </button>
+                  );
+                })}
+              </div>
+              <div style={{ fontSize: 11, color: '#64748B', marginTop: 16, lineHeight: 1.6 }}>
+                Paiement sécurisé par Stripe. Le crédit est appliqué dès la confirmation du paiement.
+                Aucun frais d'abonnement, aucune obligation.
+              </div>
+              <div className="cmp-modal-actions" style={{ marginTop: 20 }}>
+                <button type="button" className="cmp-modal-btn cancel"
+                  onClick={() => setCampRechargeOpen(false)} disabled={!!campRechargeLoading}>
+                  Fermer
                 </button>
               </div>
             </div>
