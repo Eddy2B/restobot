@@ -3643,15 +3643,39 @@ export default function Dashboard() {
               </div>
             </div>
 
-            {u?.restaurant_status && (
-              <div className="cfr">
-                <div className="cfl">Statut</div>
-                <span className="badge" style={{
-                  background: u.restaurant_status === 'active' ? '#E6FAF8' : '#FFFBEB',
-                  color: u.restaurant_status === 'active' ? '#059669' : '#D97706'
-                }}>{u.restaurant_status === 'active' ? 'Actif' : u.restaurant_status === 'trial' ? 'Essai' : u.restaurant_status}</span>
-              </div>
-            )}
+            {(() => {
+              // Source de vérité = subscription.effective_status (croisé backend),
+              // pas u.restaurant_status (snapshot JWT login, stale).
+              const eff = subscription?.effective_status;
+              if (!eff) return null;
+              const planLabel = subscription?.plan === 'founder' ? 'Plan Fondateur' : subscription?.plan === 'standard' ? 'Plan Standard' : '';
+              let label, bg, color;
+              if (eff === 'active') {
+                label = planLabel ? `Actif — ${planLabel}` : 'Actif';
+                bg = '#E6FAF8'; color = '#059669';
+              } else if (eff === 'trial') {
+                label = 'Essai gratuit';
+                bg = '#FFFBEB'; color = '#D97706';
+              } else if (eff === 'expired') {
+                label = 'Expiré';
+                bg = '#FEE2E2'; color = '#B91C1C';
+              } else if (eff === 'suspended') {
+                label = 'Suspendu';
+                bg = '#FEE2E2'; color = '#B91C1C';
+              } else if (eff === 'canceled') {
+                label = 'Résilié';
+                bg = '#FEE2E2'; color = '#B91C1C';
+              } else {
+                label = eff;
+                bg = '#F3F4F6'; color = '#374151';
+              }
+              return (
+                <div className="cfr">
+                  <div className="cfl">Statut</div>
+                  <span className="badge" style={{ background: bg, color }}>{label}</span>
+                </div>
+              );
+            })()}
             {u?.trial_ends_at && (
               <div className="cfr">
                 <div className="cfl">Fin d&apos;essai</div>
@@ -4278,6 +4302,7 @@ export default function Dashboard() {
                     <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 2 }}>
                       {subscription.blocked_reason === 'past_due' ? 'Paiement en échec' :
                        subscription.blocked_reason === 'canceled' ? 'Abonnement résilié' :
+                       subscription.blocked_reason === 'suspended' ? 'Compte suspendu' :
                        'Votre essai gratuit est terminé'}
                     </div>
                     <div style={{ fontSize: 12, opacity: 0.95 }}>

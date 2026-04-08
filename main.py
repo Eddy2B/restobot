@@ -213,33 +213,53 @@ PLAN_LIMITS = {"founder": 500, "standard": 500, "trial": 500}
 PLAN_RATES = {"founder": 0.08, "standard": 0.06, "trial": 0.0}
 
 
-def is_active_or_trial_valid(rid: str) -> bool:
-    """True si le restaurant peut consommer (essai non expiré OU abonnement actif).
-    Source de vérité alignée avec /api/subscription : settings.subscription_status
-    + restaurants.trial_ends_at. Bloque past_due, canceled, et essai expiré.
+def compute_effective_status(rest: dict) -> str:
+    """Croise les 3 sources de vérité (column status, settings.subscription_status,
+    trial_ends_at) pour calculer le vrai état utilisateur. Retourne :
+    - "suspended" : column status = suspended (admin a suspendu manuellement)
+    - "active"    : abonnement payant actif
+    - "canceled"  : abonnement annulé / résilié
+    - "expired"   : essai expiré sans abonnement, OU paiement past_due
+    - "trial"     : essai en cours et non expiré
+    Aucune ambiguïté possible : 1 état retourné, exclusif.
     """
-    rest = restaurants_cache.get(rid)
     if not rest:
-        return False
+        return "unknown"
+    # Suspension admin > tout le reste (le admin peut suspendre un compte payant)
+    if rest.get("status") == "suspended":
+        return "suspended"
     settings = rest.get("settings", {}) or {}
     sub_status = settings.get("subscription_status", "trial")
     if sub_status == "active":
-        return True
-    if sub_status in ("past_due", "canceled", "cancelled"):
-        return False
-    # En essai : check trial_ends_at
+        return "active"
+    if sub_status in ("canceled", "cancelled"):
+        return "canceled"
+    if sub_status == "past_due":
+        return "expired"
+    # En essai (sub_status == "trial" ou absent) : check trial_ends_at
     trial_ends = rest.get("trial_ends_at", "")
-    if not trial_ends:
+    if trial_ends:
+        try:
+            from datetime import datetime as _dt
+            if isinstance(trial_ends, str):
+                ends = _dt.fromisoformat(trial_ends.replace("Z", "+00:00"))
+            else:
+                ends = trial_ends
+            if ends.replace(tzinfo=None) < datetime.utcnow():
+                return "expired"
+        except Exception:
+            pass
+    return "trial"
+
+
+def is_active_or_trial_valid(rid: str) -> bool:
+    """True si le restaurant peut consommer. Délègue à compute_effective_status
+    qui croise les 3 sources de vérité (column status, settings.subscription_status,
+    trial_ends_at). Seuls "active" et "trial" donnent accès."""
+    rest = restaurants_cache.get(rid)
+    if not rest:
         return False
-    try:
-        from datetime import datetime as _dt
-        if isinstance(trial_ends, str):
-            ends = _dt.fromisoformat(trial_ends.replace("Z", "+00:00"))
-        else:
-            ends = trial_ends
-        return ends.replace(tzinfo=None) > datetime.utcnow()
-    except Exception:
-        return False
+    return compute_effective_status(rest) in ("active", "trial")
 
 
 def expired_402() -> JSONResponse:
@@ -8116,6 +8136,8 @@ async def admin_list_restaurants(request: Request):
         result.append({
             "id": rid, "slug": rest.get("slug", ""), "name": rest.get("name", ""),
             "status": rest.get("status", "trial"),
+            "effective_status": compute_effective_status(rest),
+            "subscription_status": rest.get("settings", {}).get("subscription_status", "trial"),
             "trial_ends_at": rest.get("trial_ends_at"),
             "created_at": rest.get("created_at"),
             "owner_phone": rest.get("owner_phone", ""),
@@ -8312,25 +8334,22 @@ async def admin_update_restaurant_status(rid: str, request: Request):
         return {"error": "Restaurant not found"}
     data = await request.json()
     new_status = data.get("status", "")
-    if new_status in ("trial", "active", "suspended", "cancelled"):
-        rest["status"] = new_status
-        if db_pool:
-            try:
-                async with db_pool.acquire() as conn:
-                    await conn.execute("UPDATE restaurants SET status = $1 WHERE id = $2::uuid", new_status, rid)
-            except Exception as e:
-                logger.error(f"Admin status update error: {e}")
-        return {"status": "ok", "new_status": new_status}
-    return {"error": "Invalid status"}
-
-
-@app.delete("/api/admin/restaurant/{rid}")
-async def admin_delete_restaurant(rid: str, request: Request):
-    if not verify_admin(request):
-        return Response(status_code=401)
-    rest = restaurants_cache.get(rid)
-    if not rest:
-        return {"error": "Restaurant not found"}
+    if new_status not in ("trial", "active", "suspended", "cancelled"):
+        return {"error": "Invalid status"}
+    rest["status"] = new_status
+    if db_pool:
+        try:
+            async with db_pool.acquire() as conn:
+                await conn.execute(
+                    "UPDATE restaurants SET status = $1, updated_at = NOW() WHERE id = $2::uuid",
+                    new_status, rid,
+                )
+        except Exception as e:
+            logger.error(f"Admin status update error: {e}")
+            return {"error": str(e)}
+    bump_version(rid)
+    logger.info(f"Admin: status -> {new_status} for {rest.get('name')} ({rid[:8]}...)")
+    return {"status": "ok", "new_status": new_status, "effective_status": compute_effective_status(rest)}
 
 
 @app.put("/api/admin/restaurant/{rid}")
@@ -8884,7 +8903,7 @@ function renderDashTable(){
 function renderRestoTable(){
   var h='';
   restaurants.forEach(function(r){
-    var st=statusBadge(r.status);
+    var st=statusBadge(r.effective_status||r.status);
     var wa=r.whatsapp_connected?'<span style="color:var(--ok)">✓</span>':'<span style="color:var(--tm)">—</span>';
     h+='<tr>';
     h+='<td style="font-weight:700">'+esc(r.name)+'</td>';
@@ -8893,10 +8912,11 @@ function renderRestoTable(){
     h+='<td style="font-size:11px">'+esc(r.owner_phone||'—')+'</td>';
     h+='<td>'+wa+'</td>';
     h+='<td>'+r.tables_count+'</td>';
-    h+='<td><div style="display:flex;gap:4px">';
+    h+='<td><div style="display:flex;gap:4px;flex-wrap:wrap">';
     h+='<button class="btn btn-ghost btn-xs" data-action="edit" data-id="'+r.id+'">Modifier</button>';
     h+='<button class="btn btn-ok btn-xs" data-action="setstatus" data-id="'+r.id+'" data-newstatus="active">Activer</button>';
     h+='<button class="btn btn-danger btn-xs" data-action="setstatus" data-id="'+r.id+'" data-newstatus="suspended">Suspendre</button>';
+    h+='<button class="btn btn-danger btn-xs" data-action="delete" data-id="'+r.id+'" data-name="'+esc(r.name)+'">Supprimer</button>';
     h+='</div></td>';
     h+='</tr>';
   });
@@ -8907,6 +8927,8 @@ function statusBadge(s){
   if(s==='trial') return '<span class="badge badge-wa">Essai</span>';
   if(s==='active') return '<span class="badge badge-ok">Actif</span>';
   if(s==='suspended') return '<span class="badge badge-da">Suspendu</span>';
+  if(s==='expired') return '<span class="badge badge-da">Expiré</span>';
+  if(s==='canceled'||s==='cancelled') return '<span class="badge badge-da">Résilié</span>';
   return '<span class="badge badge-ac">'+s+'</span>';
 }
 
@@ -9309,7 +9331,7 @@ document.addEventListener('click',function(e){
   if(action==='detail')openDetail(id);
   else if(action==='edit'){closeDetail();openEdit(id)}
   else if(action==='delete')confirmDelete(id,t.getAttribute('data-name'));
-  else if(action==='setstatus')setStatus(id,t.getAttribute('data-status'));
+  else if(action==='setstatus')setStatus(id,t.getAttribute('data-newstatus'));
   else if(action==='delbooking')deleteBooking(t.getAttribute('data-rid'),t.getAttribute('data-bid'));
 });
 
@@ -9500,19 +9522,21 @@ async def api_subscription(request: Request):
             trial_expired = diff < 0
         except Exception:
             pass
-    access_blocked = not is_active_or_trial_valid(rid)
-    if status == "active":
+    effective_status = compute_effective_status(rest)
+    access_blocked = effective_status not in ("active", "trial")
+    if effective_status == "active":
         blocked_reason = None
-    elif status == "past_due":
-        blocked_reason = "past_due"
-    elif status in ("canceled", "cancelled"):
+    elif effective_status == "suspended":
+        blocked_reason = "suspended"
+    elif effective_status == "canceled":
         blocked_reason = "canceled"
-    elif trial_expired:
-        blocked_reason = "trial_expired"
+    elif effective_status == "expired":
+        blocked_reason = "trial_expired" if status == "trial" else "past_due"
     else:
         blocked_reason = None
     return {
-        "status": status,
+        "status": status,                            # legacy : settings.subscription_status
+        "effective_status": effective_status,        # nouveau : état réel croisé
         "plan": plan,
         "trial_days_left": trial_days_left,
         "trial_expired": trial_expired if status == "trial" else False,
