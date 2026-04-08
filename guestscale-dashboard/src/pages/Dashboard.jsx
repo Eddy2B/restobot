@@ -1089,7 +1089,12 @@ export default function Dashboard() {
                     <div className="card-t">Réservations</div>
                     <div className="card-s">{bookingsForDate.length} pour le {formatDateFr(selDate)}</div>
                   </div>
-                  <button className="ba" onClick={openNewResa}>+ Nouvelle réservation</button>
+                  <button className="ba" onClick={openNewResa}
+                    disabled={subscription?.access_blocked}
+                    title={subscription?.access_blocked ? 'Fonctionnalité réservée aux abonnés' : ''}
+                    style={subscription?.access_blocked ? { opacity: 0.5, cursor: 'not-allowed' } : undefined}>
+                    + Nouvelle réservation
+                  </button>
                 </div>
                 {bookingsForDate.slice(0, 5).map(bk => (
                   <div key={bk.id} className="rw" style={{ cursor: 'pointer' }} onClick={() => openEditResa(bk)}>
@@ -1570,7 +1575,12 @@ export default function Dashboard() {
                 </button>
             ))}
             <div style={{ flex: 1 }} />
-            <button className="ba" onClick={openNewResa}>+ Nouvelle réservation</button>
+            <button className="ba" onClick={openNewResa}
+              disabled={subscription?.access_blocked}
+              title={subscription?.access_blocked ? 'Fonctionnalité réservée aux abonnés' : ''}
+              style={subscription?.access_blocked ? { opacity: 0.5, cursor: 'not-allowed' } : undefined}>
+              + Nouvelle réservation
+            </button>
             <button className="ba" style={{ background: 'var(--bg)', color: 'var(--ts)', border: '1px solid var(--b)' }}
               onClick={() => {
                 apiFetch('/api/bookings/export').then(r => r.blob()).then(blob => {
@@ -2932,12 +2942,16 @@ export default function Dashboard() {
             <div style={{ fontSize: 22, fontWeight: 800, color: 'var(--t)' }}>Campagnes</div>
             <div style={{ fontSize: 12, color: 'var(--tm)', marginTop: 2 }}>Email, WhatsApp ou les deux — historique de vos envois</div>
           </div>
-          <button className="ba" onClick={() => {
-            setCampaignMode('create'); setCampSubject(''); setCampBody('');
-            setCampFilterTags([]); setCampNotSeen(0); setCampPreviewCount(null);
-            setCampChannels(['email']); setCampTemplate(null);
-            loadWallet();
-          }}>+ Nouvelle campagne</button>
+          <button className="ba"
+            disabled={subscription?.access_blocked}
+            title={subscription?.access_blocked ? 'Fonctionnalité réservée aux abonnés' : ''}
+            style={subscription?.access_blocked ? { opacity: 0.5, cursor: 'not-allowed' } : undefined}
+            onClick={() => {
+              setCampaignMode('create'); setCampSubject(''); setCampBody('');
+              setCampFilterTags([]); setCampNotSeen(0); setCampPreviewCount(null);
+              setCampChannels(['email']); setCampTemplate(null);
+              loadWallet();
+            }}>+ Nouvelle campagne</button>
         </div>
         <div className="card">
           {campaignList.length === 0 ? (
@@ -4249,11 +4263,41 @@ export default function Dashboard() {
             <div style={{ fontSize: 13, color: 'var(--tm)', fontWeight: 600 }}>{fmtNow()}</div>
           </div>
         </div>
-            {subscription?.trial_expired && subscription?.status === 'trial' && (
-              <div style={{ padding: '10px 20px', background: '#FEF3C7', borderBottom: '1px solid #FCD34D', fontSize: 13, color: '#92400E', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                <span>Votre essai gratuit est termine. Choisissez un plan pour continuer a utiliser GuestScale.</span>
-                <button className="ba" style={{ fontSize: 11, padding: '6px 14px', flexShrink: 0 }}
-                  onClick={() => setPage('account')}>Choisir un plan</button>
+            {subscription?.access_blocked && (
+              <div style={{
+                padding: '14px 20px',
+                background: 'linear-gradient(135deg, #DC2626, #EF4444)',
+                color: '#fff',
+                display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                gap: 16, flexWrap: 'wrap',
+                boxShadow: '0 2px 8px rgba(239,68,68,.3)',
+              }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 12, flex: 1, minWidth: 240 }}>
+                  <div style={{ fontSize: 24, lineHeight: 1 }}>⚠️</div>
+                  <div>
+                    <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 2 }}>
+                      {subscription.blocked_reason === 'past_due' ? 'Paiement en échec' :
+                       subscription.blocked_reason === 'canceled' ? 'Abonnement résilié' :
+                       'Votre essai gratuit est terminé'}
+                    </div>
+                    <div style={{ fontSize: 12, opacity: 0.95 }}>
+                      Toutes les fonctionnalités sont désactivées (IA WhatsApp, campagnes, réservations…). Passez au plan payant pour réactiver votre compte.
+                    </div>
+                  </div>
+                </div>
+                <button type="button"
+                  onClick={() => setPage('account')}
+                  style={{
+                    padding: '12px 24px', borderRadius: 10, border: 'none',
+                    background: '#fff', color: '#DC2626',
+                    fontSize: 14, fontWeight: 800, cursor: 'pointer',
+                    fontFamily: 'var(--f)', whiteSpace: 'nowrap',
+                    boxShadow: '0 2px 8px rgba(0,0,0,.15)', transition: 'transform .15s',
+                  }}
+                  onMouseEnter={e => e.currentTarget.style.transform = 'translateY(-1px)'}
+                  onMouseLeave={e => e.currentTarget.style.transform = 'translateY(0)'}>
+                  Passez au plan Fondateur — 99 €/mois
+                </button>
               </div>
             )}
         <div className="content">

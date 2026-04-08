@@ -202,6 +202,7 @@ daily_stats_history = {}    # restaurant_id: [snapshots]
 ai_paused_conversations = {}  # rid -> {phone: pause_until_iso}
 escalations = {}            # rid -> [escalation dicts]
 missed_call_tracker = {}    # rid -> {phone: {wa_sent_at, call_sent_at, date}}
+expired_reply_tracker = {}  # rid -> {phone: last_auto_reply_iso}  (24h cooldown anti-spam)
 usage_counters = {}  # rid -> {"2026-04": {"total": 0, "missed_call": 0, "reminder": 0, "review": 0, "other": 0}}
 
 # Waitlist per restaurant
@@ -210,6 +211,46 @@ waitlist = {}               # restaurant_id: [entries]
 
 PLAN_LIMITS = {"founder": 500, "standard": 500, "trial": 500}
 PLAN_RATES = {"founder": 0.08, "standard": 0.06, "trial": 0.0}
+
+
+def is_active_or_trial_valid(rid: str) -> bool:
+    """True si le restaurant peut consommer (essai non expiré OU abonnement actif).
+    Source de vérité alignée avec /api/subscription : settings.subscription_status
+    + restaurants.trial_ends_at. Bloque past_due, canceled, et essai expiré.
+    """
+    rest = restaurants_cache.get(rid)
+    if not rest:
+        return False
+    settings = rest.get("settings", {}) or {}
+    sub_status = settings.get("subscription_status", "trial")
+    if sub_status == "active":
+        return True
+    if sub_status in ("past_due", "canceled", "cancelled"):
+        return False
+    # En essai : check trial_ends_at
+    trial_ends = rest.get("trial_ends_at", "")
+    if not trial_ends:
+        return False
+    try:
+        from datetime import datetime as _dt
+        if isinstance(trial_ends, str):
+            ends = _dt.fromisoformat(trial_ends.replace("Z", "+00:00"))
+        else:
+            ends = trial_ends
+        return ends.replace(tzinfo=None) > datetime.utcnow()
+    except Exception:
+        return False
+
+
+def expired_402() -> JSONResponse:
+    """Standardised 402 Payment Required response for expired/blocked accounts."""
+    return JSONResponse(
+        status_code=402,
+        content={
+            "error": "Essai expiré ou abonnement inactif — passez à un plan payant pour continuer",
+            "code": "subscription_required",
+        },
+    )
 
 async def increment_message_count(rid: str, msg_type: str = "other"):
     month = now_paris().strftime("%Y-%m")
@@ -1046,6 +1087,9 @@ async def schedule_review_followup(rid: str, customer_phone: str, customer_name:
 async def send_review_request(rid: str, customer_phone: str, customer_name: str):
     rest = restaurants_cache.get(rid)
     if not rest:
+        return
+    if not is_active_or_trial_valid(rid):
+        logger.warning(f"Review request skipped (expired/inactive) for {rid[:8]}")
         return
     name = customer_name.split()[0] if customer_name else ""
     greeting = f"Bonjour {name} ! " if name else "Bonjour ! "
@@ -1952,6 +1996,9 @@ async def send_daily_recap():
         owner = rest.get("owner_phone")
         if not owner or not rest.get("whatsapp_phone_number_id"):
             continue
+        if not is_active_or_trial_valid(rid):
+            logger.warning(f"Daily recap skipped (expired/inactive) for {rid[:8]} {rest.get('name', '?')!r}")
+            continue
         try:
             recap = build_daily_recap(rid)
             await send_whatsapp_message(rest["whatsapp_phone_number_id"], rest["whatsapp_access_token"], owner, recap)
@@ -2225,6 +2272,43 @@ async def process_and_reply(rid: str, phone_number_id: str, customer_phone: str,
             await send_whatsapp_message(phone_number_id, access_token, customer_phone, response)
             logger.info(f"Owner command [{rest['name']}]: {message_text[:50]}")
             return
+
+    # Trial expired / subscription inactive : envoie un message auto une fois par 24h,
+    # ne fait PAS tourner l'IA (pas de coût Anthropic + pas d'engagement service).
+    if not is_active_or_trial_valid(rid):
+        rest_phone = rest.get("settings", {}).get("phone", "") or rest.get("phone", "")
+        rest_name = rest.get("name", "notre restaurant")
+        # Cooldown 24h par customer pour éviter de spammer si le client envoie 10 messages
+        tracker = expired_reply_tracker.setdefault(rid, {})
+        last = tracker.get(customer_phone, "")
+        send_auto = True
+        if last:
+            try:
+                last_dt = datetime.fromisoformat(last.replace("Z", "+00:00")).replace(tzinfo=None)
+                if (datetime.utcnow() - last_dt).total_seconds() < 86400:
+                    send_auto = False
+            except Exception:
+                pass
+        if send_auto:
+            if rest_phone:
+                msg = (
+                    f"Bonjour, le restaurant {rest_name} n'est pas disponible sur ce canal "
+                    f"pour le moment. Vous pouvez le contacter directement au {rest_phone}."
+                )
+            else:
+                msg = (
+                    f"Bonjour, le restaurant {rest_name} n'est pas disponible sur ce canal "
+                    f"pour le moment. Merci de le contacter directement."
+                )
+            try:
+                await send_whatsapp_message(phone_number_id, access_token, customer_phone, msg)
+                tracker[customer_phone] = now_paris().isoformat()
+                save_message(rid, customer_phone, "user", message_text)
+                save_message(rid, customer_phone, "assistant", msg)
+            except Exception as e:
+                logger.error(f"Expired auto-reply send failed for {rid[:8]}: {e}")
+        logger.info(f"WhatsApp AI skipped (expired/inactive) for {rid[:8]} {rest_name!r}")
+        return
 
     # Check if AI is paused for this restaurant or conversation
     rest_settings = rest.get("settings", {})
@@ -6063,6 +6147,10 @@ async def handle_missed_call(caller_phone: str, restaurant_phone: str):
         logger.warning(f"Missed call: restaurant {rid} not configured for WhatsApp")
         return
 
+    if not is_active_or_trial_valid(rid):
+        logger.warning(f"Missed call relance skipped (expired/inactive) for {rid[:8]} {rest.get('name', '?')!r}")
+        return
+
     caller_normalized = normalize_phone(caller_phone)
 
     # Anti-spam: max 1 per phone per day
@@ -6817,6 +6905,8 @@ async def api_wallet_checkout(request: Request):
     if not stripe_mod.api_key:
         return JSONResponse(status_code=503, content={"error": "Stripe non configuré"})
     rid = auth["restaurant_id"]
+    if not is_active_or_trial_valid(rid):
+        return expired_402()
     data = await request.json()
     try:
         amount_cents = int(data.get("amount_cents", 0))
@@ -6862,6 +6952,8 @@ async def api_campaign_send(request: Request):
     if not auth:
         return Response(status_code=401)
     rid = auth["restaurant_id"]
+    if not is_active_or_trial_valid(rid):
+        return expired_402()
     data = await request.json()
     subject = sanitize_input(data.get("subject", ""), 200)
     body = sanitize_input(data.get("body", ""), 5000)
@@ -7075,6 +7167,8 @@ async def api_tag_contact(request: Request):
     if not auth:
         return Response(status_code=401)
     rid = auth["restaurant_id"]
+    if not is_active_or_trial_valid(rid):
+        return expired_402()
     data = await request.json()
     phone = data.get("phone")
     tag = sanitize_input(data.get("tag", ""), 100)
@@ -7096,6 +7190,8 @@ async def api_note_contact(request: Request):
     if not auth:
         return Response(status_code=401)
     rid = auth["restaurant_id"]
+    if not is_active_or_trial_valid(rid):
+        return expired_402()
     data = await request.json()
     phone = data.get("phone")
     note_text = sanitize_input(data.get("note", ""), 2000)
@@ -7119,6 +7215,8 @@ async def api_preferences_contact(request: Request):
     if not auth:
         return Response(status_code=401)
     rid = auth["restaurant_id"]
+    if not is_active_or_trial_valid(rid):
+        return expired_402()
     data = await request.json()
     phone = data.get("phone")
     preferences = sanitize_input(data.get("preferences", ""), 1000)
@@ -7417,6 +7515,8 @@ async def api_add_manual_booking(request: Request):
     if not auth:
         return Response(status_code=401)
     rid = auth["restaurant_id"]
+    if not is_active_or_trial_valid(rid):
+        return expired_402()
     data = await request.json()
     sanitize_dict(data, ["name", "phone", "email", "notes", "zone", "source"], 500)
     rid_bookings = bookings.setdefault(rid, [])
@@ -7466,6 +7566,8 @@ async def api_update_booking(request: Request):
     if not auth:
         return Response(status_code=401)
     rid = auth["restaurant_id"]
+    if not is_active_or_trial_valid(rid):
+        return expired_402()
     data = await request.json()
     sanitize_dict(data, ["name", "phone"], 500)
     bid = data.get("booking_id", "")
@@ -7499,6 +7601,8 @@ async def api_delete_booking(request: Request):
     if not auth:
         return Response(status_code=401)
     rid = auth["restaurant_id"]
+    if not is_active_or_trial_valid(rid):
+        return expired_402()
     data = await request.json()
     bid = data.get("booking_id", "")
     rid_bookings = bookings.get(rid, [])
@@ -9335,6 +9439,17 @@ async def api_subscription(request: Request):
             trial_expired = diff < 0
         except Exception:
             pass
+    access_blocked = not is_active_or_trial_valid(rid)
+    if status == "active":
+        blocked_reason = None
+    elif status == "past_due":
+        blocked_reason = "past_due"
+    elif status in ("canceled", "cancelled"):
+        blocked_reason = "canceled"
+    elif trial_expired:
+        blocked_reason = "trial_expired"
+    else:
+        blocked_reason = None
     return {
         "status": status,
         "plan": plan,
@@ -9343,6 +9458,8 @@ async def api_subscription(request: Request):
         "cancel_pending": cancel_pending,
         "cancel_effective_date": cancel_effective,
         "cancel_reason": cancel_reason,
+        "access_blocked": access_blocked,
+        "blocked_reason": blocked_reason,
     }
 
 
