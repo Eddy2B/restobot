@@ -196,6 +196,8 @@ export default function Dashboard() {
   const [campTemplate, setCampTemplate] = useState(null); // index of selected template
   const [campPreviewTab, setCampPreviewTab] = useState('whatsapp'); // 'whatsapp' | 'email'
   const [campWallet, setCampWallet] = useState({ balance_cents: 0, balance_eur: 0, wa_msg_cost_cents: 15 });
+  const [campConfirmOpen, setCampConfirmOpen] = useState(false);
+  const [campSending, setCampSending] = useState(false);
   const campSubjectRef = useRef(null);
   const campBodyRef = useRef(null);
 
@@ -702,18 +704,25 @@ export default function Dashboard() {
     });
   }
 
-  async function sendCampaign() {
+  function sendCampaign() {
+    // Validation upfront, puis ouverture de la modale de confirmation
     const channels = campChannels;
     if (!channels.length) { showToast('Sélectionnez au moins un canal'); return; }
     if (channels.includes('email') && !campSubject) { showToast('Objet requis pour l\u2019envoi email'); return; }
     if (!campBody) { showToast('Message requis'); return; }
     const matched = getMatchedContacts();
     if (!matched.length) { showToast('Aucun destinataire'); return; }
+    setCampConfirmOpen(true);
+  }
+
+  async function confirmSendCampaign() {
+    const channels = campChannels;
+    const matched = getMatchedContacts();
     const filters = {};
     if (campFilterTags.length) filters.tags = campFilterTags;
     if (campNotSeen) filters.not_seen_days = parseInt(campNotSeen);
     const tplLabel = campTemplate !== null ? campaignTemplates[campTemplate].label : '';
-    if (!window.confirm(`Envoyer cette campagne à ${matched.length} contact(s) ?`)) return;
+    setCampSending(true);
     try {
       const r = await apiFetch('/api/campaigns/send', {
         method: 'POST',
@@ -722,16 +731,22 @@ export default function Dashboard() {
       const d = await r.json();
       if (!r.ok) {
         showToast(d.error || 'Erreur lors de l\u2019envoi');
+        setCampSending(false);
         return;
       }
       const parts = [];
       if (d.sent_email) parts.push(`${d.sent_email} email`);
       if (d.sent_whatsapp) parts.push(`${d.sent_whatsapp} WhatsApp`);
       showToast('Campagne envoyée — ' + (parts.join(' + ') || `${d.sent} contact(s)`));
+      setCampConfirmOpen(false);
       setCampaignMode('list');
       loadCampaigns();
       loadWallet();
-    } catch { showToast('Erreur'); }
+    } catch {
+      showToast('Erreur');
+    } finally {
+      setCampSending(false);
+    }
   }
 
   // Templates list — referenced from sendCampaign for label, also used in render
@@ -3106,7 +3121,7 @@ export default function Dashboard() {
 
               <div className="cmp-cost-bar">
                 <div className="cmp-cost-icon">
-                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#4ECDC4" strokeWidth="2"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 000 7h5a3.5 3.5 0 010 7H6"/></svg>
+                  <span style={{ fontSize: 20, fontWeight: 800, color: '#4ECDC4', lineHeight: 1 }}>€</span>
                 </div>
                 <div className="cmp-cost-detail">
                   <div className="cmp-cost-label">Coût estimé de cette campagne</div>
@@ -3246,6 +3261,49 @@ export default function Dashboard() {
             </div>
           </div>
         </div>
+
+        {/* CONFIRM MODAL */}
+        {campConfirmOpen && (
+          <div className="cmp-modal-overlay" onClick={() => !campSending && setCampConfirmOpen(false)}>
+            <div className="cmp-modal-card" onClick={e => e.stopPropagation()}>
+              <div className="cmp-modal-title">Confirmer l'envoi</div>
+              <div className="cmp-modal-recap">
+                <div className="cmp-modal-row">
+                  <span className="cmp-modal-icon">📨</span>
+                  <span className="cmp-modal-label">Canal</span>
+                  <span className="cmp-modal-val">
+                    {hasEmail && hasWA ? 'Email + WhatsApp' : hasEmail ? 'Email' : 'WhatsApp'}
+                  </span>
+                </div>
+                <div className="cmp-modal-row">
+                  <span className="cmp-modal-icon">👥</span>
+                  <span className="cmp-modal-label">Destinataires</span>
+                  <span className="cmp-modal-val">{matched.length} contact{matched.length > 1 ? 's' : ''}</span>
+                </div>
+                <div className="cmp-modal-row">
+                  <span className="cmp-modal-icon">📝</span>
+                  <span className="cmp-modal-label">Template</span>
+                  <span className="cmp-modal-val">{campTemplate !== null ? campaignTemplates[campTemplate].label : 'Personnalisé'}</span>
+                </div>
+                <div className="cmp-modal-row">
+                  <span className="cmp-modal-icon">💰</span>
+                  <span className="cmp-modal-label">Coût</span>
+                  <span className="cmp-modal-val">{waCostCents > 0 ? `${fmtEur(waCostCents)} € HT` : 'Gratuit'}</span>
+                </div>
+              </div>
+              <div className="cmp-modal-preview-label">Aperçu du message</div>
+              <textarea className="cmp-modal-preview" readOnly value={previewBody} rows={4} />
+              <div className="cmp-modal-actions">
+                <button type="button" className="cmp-modal-btn cancel" onClick={() => setCampConfirmOpen(false)} disabled={campSending}>
+                  Annuler
+                </button>
+                <button type="button" className="cmp-modal-btn confirm" onClick={confirmSendCampaign} disabled={campSending}>
+                  {campSending ? 'Envoi en cours…' : 'Confirmer l\u2019envoi'}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     );
   }

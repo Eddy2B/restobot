@@ -153,6 +153,30 @@
 .cmp-history-stat { font-size: 12px; font-weight: 700; color: var(--ac); }
 .cmp-history-empty { padding: 12px 0; text-align: center; font-size: 12px; color: var(--tm); }
 
+/* Confirm modal */
+.cmp-modal-overlay { position: fixed; inset: 0; background: rgba(15,23,42,0.5); display: flex; align-items: center; justify-content: center; z-index: 1000; backdrop-filter: blur(4px); -webkit-backdrop-filter: blur(4px); padding: 20px; animation: cmpFadeIn .2s ease-out; }
+.cmp-modal-card { background: #fff; border-radius: 16px; padding: 32px; max-width: 480px; width: 100%; box-shadow: 0 20px 60px rgba(0,0,0,0.15); animation: cmpScaleIn .2s ease-out; }
+.cmp-modal-title { font-size: 20px; font-weight: 700; color: #1E293B; margin-bottom: 20px; }
+.cmp-modal-recap { background: #F8FAFC; border-radius: 12px; padding: 16px 18px; margin-bottom: 18px; }
+.cmp-modal-row { display: flex; align-items: center; gap: 10px; padding: 8px 0; border-bottom: 1px solid #E2E8F0; font-family: var(--f); }
+.cmp-modal-row:last-child { border-bottom: none; }
+.cmp-modal-icon { font-size: 16px; flex-shrink: 0; }
+.cmp-modal-label { font-size: 13px; color: #64748B; flex: 1; }
+.cmp-modal-val { font-size: 14px; font-weight: 700; color: #1E293B; text-align: right; }
+.cmp-modal-preview-label { font-size: 11px; font-weight: 600; color: #64748B; margin-bottom: 6px; text-transform: uppercase; letter-spacing: .04em; }
+.cmp-modal-preview { width: 100%; background: #F8FAFC; border: 1px solid #E2E8F0; border-radius: 10px; padding: 12px 14px; font-family: var(--f); font-size: 13px; color: #1E293B; line-height: 1.6; resize: none; margin-bottom: 22px; }
+.cmp-modal-preview:focus { outline: none; border-color: #4ECDC4; }
+.cmp-modal-actions { display: flex; gap: 12px; justify-content: flex-end; }
+.cmp-modal-btn { padding: 12px 24px; border-radius: 10px; font-family: var(--f); font-size: 14px; cursor: pointer; transition: all .15s; }
+.cmp-modal-btn:disabled { opacity: .5; cursor: not-allowed; }
+.cmp-modal-btn.cancel { border: 1.5px solid #E2E8F0; background: transparent; color: #64748B; font-weight: 600; }
+.cmp-modal-btn.cancel:hover:not(:disabled) { background: #F8FAFC; }
+.cmp-modal-btn.confirm { border: none; background: linear-gradient(135deg, #2D7DD2, #4ECDC4); color: #fff; font-weight: 700; }
+.cmp-modal-btn.confirm:hover:not(:disabled) { transform: translateY(-1px); box-shadow: 0 6px 18px rgba(45,125,210,.3); }
+
+@keyframes cmpFadeIn { from { opacity: 0; } to { opacity: 1; } }
+@keyframes cmpScaleIn { from { opacity: 0; transform: scale(.95); } to { opacity: 1; transform: scale(1); } }
+
 @media (max-width: 1100px) {
   .cmp-layout { grid-template-columns: 1fr; }
   .cmp-sidebar { position: static; }
@@ -160,4 +184,5 @@
 @media (max-width: 760px) {
   .cmp-template-grid, .cmp-channel-grid { grid-template-columns: 1fr; }
   .cmp-step { padding: 20px; }
+  .cmp-modal-card { padding: 24px; }
 }
