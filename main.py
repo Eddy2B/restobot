@@ -5436,6 +5436,64 @@ async def send_admin_notification_email(user_email: str, first_name: str, last_n
         logger.error(f"Admin notification error: {e}")
 
 
+async def send_cancellation_emails(user_email: str, first_name: str, restaurant_name: str,
+                                   effective_date: str, reason: str = ""):
+    """Send cancellation confirmation to user + admin notification to GuestScale."""
+    if not BREVO_API_KEY:
+        logger.warning("No BREVO_API_KEY — skipping cancellation emails")
+        return
+    try:
+        async with httpx.AsyncClient(timeout=15) as client:
+            # 1. Confirmation to the user
+            await client.post(
+                "https://api.brevo.com/v3/smtp/email",
+                headers={"api-key": BREVO_API_KEY, "Content-Type": "application/json"},
+                json={
+                    "sender": {"name": "GuestScale", "email": "contact@guestscale.com"},
+                    "to": [{"email": user_email, "name": first_name}],
+                    "subject": "Confirmation de résiliation — GuestScale",
+                    "htmlContent": f"""<div style="font-family:-apple-system,sans-serif;max-width:560px;margin:0 auto;padding:32px 24px">
+<h1 style="font-size:22px;font-weight:800;color:#111827;margin:0 0 16px">Résiliation confirmée</h1>
+<p style="font-size:14px;color:#374151;line-height:1.6">Bonjour {first_name},</p>
+<p style="font-size:14px;color:#374151;line-height:1.6">Nous avons bien enregistré la résiliation de votre abonnement GuestScale pour <strong>{restaurant_name}</strong>.</p>
+<div style="background:#F9FAFB;border:1px solid #E5E7EB;border-radius:12px;padding:18px;margin:18px 0">
+<p style="margin:0 0 6px;font-size:14px"><strong>Fin d'abonnement :</strong> {effective_date}</p>
+<p style="margin:0;font-size:13px;color:#6B7280">Votre dashboard reste accessible jusqu'à cette date. Aucun frais supplémentaire ne sera prélevé.</p>
+</div>
+<p style="font-size:13px;color:#374151;line-height:1.6">Vos données restent exportables pendant 30 jours après cette date depuis l'onglet « Mon compte » → « Données personnelles ».</p>
+<p style="font-size:13px;color:#374151;line-height:1.6">Vous pouvez annuler la résiliation à tout moment avant le {effective_date} depuis votre dashboard.</p>
+<p style="font-size:13px;color:#6B7280;line-height:1.6;margin-top:20px">Merci pour votre confiance,<br>L'équipe GuestScale</p>
+<hr style="border:none;border-top:1px solid #E5E7EB;margin:20px 0">
+<p style="font-size:11px;color:#9CA3AF;text-align:center">GuestScale — Nice, France · contact@guestscale.com</p>
+</div>""",
+                }
+            )
+            # 2. Admin notification
+            reason_html = f"<p style='margin:4px 0;font-size:14px'><strong>Motif :</strong> {reason}</p>" if reason else "<p style='margin:4px 0;font-size:13px;color:#6B7280'>Aucun motif fourni.</p>"
+            await client.post(
+                "https://api.brevo.com/v3/smtp/email",
+                headers={"api-key": BREVO_API_KEY, "Content-Type": "application/json"},
+                json={
+                    "sender": {"name": "GuestScale", "email": "contact@guestscale.com"},
+                    "to": [{"email": "contact@guestscale.com", "name": "GuestScale Admin"}],
+                    "subject": f"⚠️ Résiliation : {restaurant_name}",
+                    "htmlContent": f"""<div style="font-family:-apple-system,sans-serif;max-width:500px;margin:0 auto;padding:24px">
+<h2 style="color:#111827;margin:0 0 16px">Résiliation d'abonnement</h2>
+<div style="background:#FEF2F2;border:1px solid #FECACA;border-radius:12px;padding:16px;margin-bottom:16px">
+<p style="margin:4px 0;font-size:14px"><strong>Restaurant :</strong> {restaurant_name}</p>
+<p style="margin:4px 0;font-size:14px"><strong>Email :</strong> {user_email}</p>
+<p style="margin:4px 0;font-size:14px"><strong>Fin effective :</strong> {effective_date}</p>
+{reason_html}
+<p style="margin:4px 0;font-size:13px;color:#6B7280"><strong>Date résiliation :</strong> {datetime.utcnow().strftime('%d/%m/%Y %H:%M')} UTC</p>
+</div>
+</div>""",
+                }
+            )
+            logger.info(f"Cancellation emails sent for {restaurant_name}")
+    except Exception as e:
+        logger.error(f"Cancellation email error: {e}")
+
+
 # ==============================================================
 # AUTH ENDPOINTS
 # ==============================================================
@@ -9170,6 +9228,14 @@ document.addEventListener('click',function(e){
 # STRIPE BILLING
 # ==============================================================
 
+def _last_day_of_current_month_iso() -> str:
+    """Returns ISO date string of last day of current month in Paris TZ."""
+    import calendar
+    today = today_paris()
+    last_day = calendar.monthrange(today.year, today.month)[1]
+    return f"{today.year:04d}-{today.month:02d}-{last_day:02d}"
+
+
 @app.get("/api/subscription")
 async def api_subscription(request: Request):
     auth = get_auth(request)
@@ -9180,6 +9246,9 @@ async def api_subscription(request: Request):
     settings = rest.get("settings", {})
     status = settings.get("subscription_status", "trial")
     plan = settings.get("subscription_plan", "founder")
+    cancel_pending = bool(settings.get("cancel_pending", False))
+    cancel_effective = settings.get("cancel_effective_date", "") if cancel_pending else ""
+    cancel_reason = settings.get("cancel_reason", "") if cancel_pending else ""
     trial_ends = rest.get("trial_ends_at", "")
     trial_days_left = 30
     trial_expired = False
@@ -9197,7 +9266,86 @@ async def api_subscription(request: Request):
         "plan": plan,
         "trial_days_left": trial_days_left,
         "trial_expired": trial_expired if status == "trial" else False,
+        "cancel_pending": cancel_pending,
+        "cancel_effective_date": cancel_effective,
+        "cancel_reason": cancel_reason,
     }
+
+
+@app.post("/api/account/cancel")
+async def api_account_cancel(request: Request):
+    auth = get_auth(request)
+    if not auth:
+        return Response(status_code=401)
+    rid = auth["restaurant_id"]
+    rest = restaurants_cache.get(rid)
+    if not rest:
+        return JSONResponse(status_code=404, content={"error": "Restaurant introuvable"})
+    try:
+        data = await request.json()
+    except Exception:
+        data = {}
+    reason = sanitize_input((data.get("reason") or "").strip(), 1000)
+
+    settings = rest.setdefault("settings", {})
+    if settings.get("cancel_pending"):
+        return JSONResponse(status_code=400, content={"error": "Résiliation déjà demandée"})
+
+    effective_date = _last_day_of_current_month_iso()
+    settings["cancel_pending"] = True
+    settings["cancel_effective_date"] = effective_date
+    settings["cancel_reason"] = reason
+    settings["cancel_requested_at"] = now_paris().isoformat()
+    await db_save_restaurant(rid, rest)
+    bump_version(rid)
+
+    # Look up first_name (not in JWT, so query DB)
+    first_name = ""
+    if db_pool:
+        try:
+            async with db_pool.acquire() as conn:
+                row = await conn.fetchrow("SELECT first_name FROM users WHERE id = $1::uuid", auth["user_id"])
+                if row:
+                    first_name = row["first_name"] or ""
+        except Exception as e:
+            logger.error(f"Cancel: user lookup failed: {e}")
+
+    # Email user + admin (best-effort, non-blocking on failure)
+    try:
+        await send_cancellation_emails(
+            user_email=auth.get("email", ""),
+            first_name=first_name,
+            restaurant_name=rest.get("name", "Restaurant"),
+            effective_date=effective_date,
+            reason=reason,
+        )
+    except Exception as e:
+        logger.error(f"Cancellation email failed (non-blocking): {e}")
+
+    logger.info(f"Account cancel scheduled for {rid[:8]}... effective={effective_date}")
+    return {"status": "cancelled", "effective_date": effective_date}
+
+
+@app.post("/api/account/cancel/undo")
+async def api_account_cancel_undo(request: Request):
+    auth = get_auth(request)
+    if not auth:
+        return Response(status_code=401)
+    rid = auth["restaurant_id"]
+    rest = restaurants_cache.get(rid)
+    if not rest:
+        return JSONResponse(status_code=404, content={"error": "Restaurant introuvable"})
+    settings = rest.setdefault("settings", {})
+    if not settings.get("cancel_pending"):
+        return JSONResponse(status_code=400, content={"error": "Aucune résiliation en attente"})
+    settings["cancel_pending"] = False
+    settings.pop("cancel_effective_date", None)
+    settings.pop("cancel_reason", None)
+    settings.pop("cancel_requested_at", None)
+    await db_save_restaurant(rid, rest)
+    bump_version(rid)
+    logger.info(f"Account cancel undone for {rid[:8]}...")
+    return {"status": "active"}
 
 @app.get("/api/usage")
 async def api_usage(request: Request):

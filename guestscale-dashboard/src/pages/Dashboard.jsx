@@ -176,6 +176,9 @@ export default function Dashboard() {
   const [obTone, setObTone] = useState('');
 
   const [subscription, setSubscription] = useState(null);
+  const [accountCancelOpen, setAccountCancelOpen] = useState(false);
+  const [accountCancelReason, setAccountCancelReason] = useState('');
+  const [accountCancelLoading, setAccountCancelLoading] = useState(false);
 
   // Conversation channel filter
   const [convChannel, setConvChannel] = useState('all');
@@ -3519,6 +3522,51 @@ export default function Dashboard() {
     );
   }
 
+  function formatCancelDate(iso) {
+    if (!iso) return '';
+    try {
+      const [y, m, d] = iso.split('-').map(Number);
+      const months = ['janvier','février','mars','avril','mai','juin','juillet','août','septembre','octobre','novembre','décembre'];
+      return `${d} ${months[m - 1]} ${y}`;
+    } catch { return iso; }
+  }
+
+  async function confirmAccountCancel() {
+    setAccountCancelLoading(true);
+    try {
+      const r = await apiFetch('/api/account/cancel', {
+        method: 'POST',
+        body: JSON.stringify({ reason: accountCancelReason }),
+      });
+      const d = await r.json();
+      if (!r.ok) {
+        showToast(d.error || 'Erreur lors de la résiliation');
+        setAccountCancelLoading(false);
+        return;
+      }
+      showToast(`Résiliation confirmée. Abonnement actif jusqu'au ${formatCancelDate(d.effective_date)}.`);
+      setAccountCancelOpen(false);
+      // Refresh subscription state
+      const sr = await apiFetch('/api/subscription');
+      if (sr.ok) setSubscription(await sr.json());
+    } catch {
+      showToast('Erreur réseau');
+    } finally {
+      setAccountCancelLoading(false);
+    }
+  }
+
+  async function undoAccountCancel() {
+    try {
+      const r = await apiFetch('/api/account/cancel/undo', { method: 'POST', body: '{}' });
+      const d = await r.json();
+      if (!r.ok) { showToast(d.error || 'Erreur'); return; }
+      showToast('Résiliation annulée — votre abonnement reste actif');
+      const sr = await apiFetch('/api/subscription');
+      if (sr.ok) setSubscription(await sr.json());
+    } catch { showToast('Erreur réseau'); }
+  }
+
   function renderAccount() {
     const u = state.user;
 
@@ -3570,16 +3618,52 @@ export default function Dashboard() {
                 <div style={{ color: 'var(--tm)', fontSize: 13 }}>Chargement...</div>
             ) : subscription.status === 'active' ? (
               <div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12, flexWrap: 'wrap' }}>
                   <span className="badge" style={{ background: '#E6FAF8', color: '#059669' }}>Actif</span>
                   <span style={{ fontSize: 14, fontWeight: 700 }}>Plan {subscription.plan === 'founder' ? 'Fondateur — 99' : 'Standard — 149'}&#8364;/mois</span>
+                  {subscription.cancel_pending && (
+                    <span className="badge" style={{ background: '#FEF2F2', color: '#B91C1C' }}>
+                      Résiliation prévue
+                    </span>
+                  )}
                 </div>
-                <button className="ba" style={{ background: 'var(--bg)', color: 'var(--ts)', border: '1px solid var(--b)' }}
-                  onClick={async () => {
-                    const r = await apiFetch('/api/stripe/portal', { method: 'POST', body: '{}' });
-                    const d = await r.json();
-                    if (d.portal_url) window.location.href = d.portal_url;
-                  }}>Gerer mon abonnement</button>
+                {subscription.cancel_pending ? (
+                  <div>
+                    <div style={{ padding: 12, background: '#FEF2F2', border: '1px solid #FECACA', borderRadius: 10, marginBottom: 12, fontSize: 13, color: '#7F1D1D', lineHeight: 1.6 }}>
+                      Votre abonnement sera résilié le <strong>{formatCancelDate(subscription.cancel_effective_date)}</strong>. Vous gardez l'accès complet jusqu'à cette date.
+                    </div>
+                    <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+                      <button className="ba" style={{ background: 'var(--ac)', color: '#fff', border: 'none' }}
+                        onClick={undoAccountCancel}>Annuler la résiliation</button>
+                      <button className="ba" style={{ background: 'var(--bg)', color: 'var(--ts)', border: '1px solid var(--b)' }}
+                        onClick={async () => {
+                          const r = await apiFetch('/api/stripe/portal', { method: 'POST', body: '{}' });
+                          const d = await r.json();
+                          if (d.portal_url) window.location.href = d.portal_url;
+                        }}>Gerer mon abonnement</button>
+                    </div>
+                  </div>
+                ) : (
+                  <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center' }}>
+                    <button className="ba" style={{ background: 'var(--bg)', color: 'var(--ts)', border: '1px solid var(--b)' }}
+                      onClick={async () => {
+                        const r = await apiFetch('/api/stripe/portal', { method: 'POST', body: '{}' });
+                        const d = await r.json();
+                        if (d.portal_url) window.location.href = d.portal_url;
+                      }}>Gerer mon abonnement</button>
+                    <button type="button"
+                      style={{
+                        border: '1.5px solid #EF4444', color: '#EF4444', background: 'transparent',
+                        borderRadius: 10, padding: '10px 20px', fontSize: 13, fontWeight: 600,
+                        cursor: 'pointer', fontFamily: 'var(--f)', transition: 'background .15s',
+                      }}
+                      onMouseEnter={e => e.currentTarget.style.background = 'rgba(239,68,68,0.05)'}
+                      onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
+                      onClick={() => { setAccountCancelReason(''); setAccountCancelOpen(true); }}>
+                      Résilier mon abonnement
+                    </button>
+                  </div>
+                )}
               </div>
             ) : subscription.status === 'past_due' ? (
               <div>
@@ -3681,6 +3765,48 @@ export default function Dashboard() {
             }}>Supprimer mon compte</button>
           </div>
         </div>
+
+        {/* CANCEL ACCOUNT MODAL */}
+        {accountCancelOpen && (
+          <div className="cmp-modal-overlay" onClick={() => !accountCancelLoading && setAccountCancelOpen(false)}>
+            <div className="cmp-modal-card" onClick={e => e.stopPropagation()}>
+              <div className="cmp-modal-title">Résilier votre abonnement</div>
+              <p style={{ fontSize: 13, color: '#64748B', lineHeight: 1.6, marginBottom: 18 }}>
+                Votre abonnement restera actif jusqu'à la fin du mois en cours. Aucun frais de résiliation. Vos données resteront exportables pendant 30 jours.
+              </p>
+              <div className="cmp-subject-label" style={{ marginBottom: 6 }}>Pourquoi souhaitez-vous partir ? (facultatif)</div>
+              <textarea
+                value={accountCancelReason}
+                onChange={e => setAccountCancelReason(e.target.value)}
+                placeholder="Votre retour nous aide à nous améliorer..."
+                rows={4}
+                style={{
+                  width: '100%', padding: '12px 14px', borderRadius: 10, border: '1.5px solid #E2E8F0',
+                  background: '#F8FAFC', fontFamily: 'var(--f)', fontSize: 13, color: '#1E293B',
+                  lineHeight: 1.6, resize: 'vertical', marginBottom: 22,
+                }}
+              />
+              <div className="cmp-modal-actions">
+                <button type="button" className="cmp-modal-btn cancel"
+                  onClick={() => setAccountCancelOpen(false)} disabled={accountCancelLoading}>
+                  Annuler
+                </button>
+                <button type="button"
+                  style={{
+                    padding: '12px 24px', borderRadius: 10, border: 'none',
+                    background: '#EF4444', color: '#fff', fontWeight: 700, fontSize: 14,
+                    fontFamily: 'var(--f)', cursor: 'pointer', transition: 'all .15s',
+                    opacity: accountCancelLoading ? 0.5 : 1,
+                  }}
+                  onMouseEnter={e => !accountCancelLoading && (e.currentTarget.style.background = '#DC2626')}
+                  onMouseLeave={e => e.currentTarget.style.background = '#EF4444'}
+                  onClick={confirmAccountCancel} disabled={accountCancelLoading}>
+                  {accountCancelLoading ? 'Résiliation…' : 'Confirmer la résiliation'}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     );
   }
