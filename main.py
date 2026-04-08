@@ -252,6 +252,51 @@ def expired_402() -> JSONResponse:
         },
     )
 
+
+async def _refresh_rest_from_db(rid: str) -> bool:
+    """Re-read trial_ends_at, settings, status from DB and update the in-memory cache.
+    Used to pick up out-of-band DB changes (manual SQL UPDATE, external scripts).
+    Returns True if the cache entry was updated."""
+    if not db_pool:
+        return False
+    try:
+        async with db_pool.acquire() as conn:
+            row = await conn.fetchrow(
+                "SELECT settings, status, trial_ends_at FROM restaurants WHERE id = $1::uuid",
+                rid,
+            )
+            if not row:
+                return False
+            rest = restaurants_cache.setdefault(rid, {})
+            rest["settings"] = json.loads(row["settings"]) if row["settings"] else {}
+            rest["status"] = row["status"] or "trial"
+            rest["trial_ends_at"] = row["trial_ends_at"].isoformat() if row["trial_ends_at"] else None
+            return True
+    except Exception as e:
+        logger.error(f"_refresh_rest_from_db failed for {rid[:8]}: {e}")
+        return False
+
+
+async def _refresh_all_restaurants_from_db():
+    """Bulk refresh of trial_ends_at + settings + status for all known restaurants.
+    Called periodically by the background loop to catch out-of-band DB changes
+    within ~30s of them happening."""
+    if not db_pool:
+        return
+    try:
+        async with db_pool.acquire() as conn:
+            rows = await conn.fetch("SELECT id, settings, status, trial_ends_at FROM restaurants")
+            for row in rows:
+                rid = str(row["id"])
+                if rid not in restaurants_cache:
+                    continue  # only refresh restos already loaded; new ones come via load_all
+                rest = restaurants_cache[rid]
+                rest["settings"] = json.loads(row["settings"]) if row["settings"] else {}
+                rest["status"] = row["status"] or "trial"
+                rest["trial_ends_at"] = row["trial_ends_at"].isoformat() if row["trial_ends_at"] else None
+    except Exception as e:
+        logger.error(f"_refresh_all_restaurants_from_db failed: {e}")
+
 async def increment_message_count(rid: str, msg_type: str = "other"):
     month = now_paris().strftime("%Y-%m")
     counters = usage_counters.setdefault(rid, {})
@@ -5290,17 +5335,30 @@ async def lifespan(app: FastAPI):
                 logger.error(f"Reminder loop error: {e}")
             await asyncio.sleep(300)
 
+    async def cache_refresh_loop():
+        """Periodically refresh trial_ends_at + settings + status from DB so that
+        out-of-band SQL UPDATEs (manual debug, external scripts) propagate to
+        the in-memory cache and the trial-blocking gates within ~30 seconds."""
+        while True:
+            try:
+                await _refresh_all_restaurants_from_db()
+            except Exception as e:
+                logger.error(f"Cache refresh loop error: {e}")
+            await asyncio.sleep(30)
+
     task1 = asyncio.create_task(review_loop())
     task2 = asyncio.create_task(recap_loop())
     task3 = asyncio.create_task(slot_reset_loop())
     task4 = asyncio.create_task(waitlist_loop())
     task5 = asyncio.create_task(reminder_loop())
+    task6 = asyncio.create_task(cache_refresh_loop())
     yield
     task1.cancel()
     task2.cancel()
     task3.cancel()
     task4.cancel()
     task5.cancel()
+    task6.cancel()
     if db_pool:
         await db_pool.close()
     logger.info("GuestScale stopped")
@@ -9420,6 +9478,9 @@ async def api_subscription(request: Request):
     if not auth:
         return Response(status_code=401)
     rid = auth["restaurant_id"]
+    # Always refresh from DB so manual SQL updates (or out-of-band changes) are
+    # picked up immediately by the frontend on the next poll.
+    await _refresh_rest_from_db(rid)
     rest = restaurants_cache.get(rid, {})
     settings = rest.get("settings", {})
     status = settings.get("subscription_status", "trial")
