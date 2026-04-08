@@ -892,6 +892,45 @@ export default function Dashboard() {
     window.history.replaceState(null, '', qs ? '?' + qs : window.location.pathname);
   }, []);
 
+  // ---- Stripe subscription checkout return handling ----
+  // The Stripe webhook can take 1-5 seconds to fire, so we poll /api/subscription
+  // a few times until we see status === 'active'.
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const subStatus = params.get('subscription');
+    if (!subStatus) return;
+    if (subStatus === 'success') {
+      showToast('Paiement confirmé — activation en cours...');
+      let attempts = 0;
+      const maxAttempts = 10; // ~10 seconds
+      const poll = async () => {
+        attempts++;
+        try {
+          const r = await apiFetch('/api/subscription');
+          if (r.ok) {
+            const sub = await r.json();
+            setSubscription(sub);
+            if (sub.status === 'active') {
+              showToast('Abonnement activé !');
+              return;
+            }
+          }
+        } catch {}
+        if (attempts < maxAttempts) {
+          setTimeout(poll, 1000);
+        } else {
+          showToast('Activation en cours — rechargez la page dans quelques instants');
+        }
+      };
+      poll();
+    } else if (subStatus === 'cancelled' || subStatus === 'cancel') {
+      showToast('Paiement annulé');
+    }
+    params.delete('subscription');
+    const qs = params.toString();
+    window.history.replaceState(null, '', qs ? '?' + qs : window.location.pathname);
+  }, []);
+
   // ---- Account ----
   async function changePassword() {
     if (!acOldPwd || !acNewPwd) { showToast('Remplissez tous les champs'); return; }
