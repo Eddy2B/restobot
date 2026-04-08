@@ -9500,30 +9500,65 @@ async def api_stripe_portal(request: Request):
     )
     return {"portal_url": session.url}
 
+def _sg(obj, key, default=None):
+    """Safe getter for Stripe webhook objects.
+
+    StripeObject inherits from dict in some SDK versions but not all — bracket
+    access via `in` works in every version. Returns default if key absent or
+    obj is None.
+    """
+    if obj is None:
+        return default
+    try:
+        if key in obj:
+            val = obj[key]
+            return default if val is None else val
+    except (TypeError, KeyError):
+        pass
+    # Fallback: attribute access (some StripeObject builds expose only that)
+    try:
+        val = getattr(obj, key)
+        return default if val is None else val
+    except AttributeError:
+        return default
+
+
 @app.post("/api/stripe/webhook")
 async def api_stripe_webhook(request: Request):
     payload = await request.body()
     sig = request.headers.get("stripe-signature", "")
     try:
         event = stripe_mod.Webhook.construct_event(payload, sig, STRIPE_WEBHOOK_SECRET)
-    except Exception:
+    except stripe_mod.error.SignatureVerificationError as e:
+        logger.error(f"Stripe webhook signature verification failed: {e}")
         return Response(status_code=400)
-    etype = event.get("type", "")
-    obj = event.get("data", {}).get("object", {})
+    except Exception as e:
+        logger.error(f"Stripe webhook parse error: {e}")
+        return Response(status_code=400)
+
+    # Use _sg() helper instead of .get() — Stripe SDK versions vary on whether
+    # StripeObject implements .get(); bracket-access via `in` works everywhere.
+    etype = _sg(event, "type", "") or ""
+    data = _sg(event, "data", None)
+    obj = _sg(data, "object", None)
+    if obj is None:
+        logger.warning(f"Stripe webhook {etype} with no data.object")
+        return {"status": "ok"}
+
     if etype == "checkout.session.completed":
-        meta = obj.get("metadata", {}) or {}
-        rid = meta.get("restaurant_id")
+        meta = _sg(obj, "metadata", None) or {}
+        rid = _sg(meta, "restaurant_id", None)
+        session_id = _sg(obj, "id", "") or ""
         if not rid:
-            logger.warning(f"Stripe webhook checkout.session.completed without restaurant_id metadata: session={obj.get('id', '')[:20]}")
+            logger.warning(f"Stripe webhook checkout.session.completed without restaurant_id metadata: session={session_id[:20]}")
             return {"status": "ok"}
-        meta_type = meta.get("type", "subscription")
+        meta_type = _sg(meta, "type", "subscription") or "subscription"
         if meta_type == "wallet_topup":
             # Wallet recharge — credit balance and log transaction (idempotent)
             try:
-                amount_cents = int(meta.get("amount_cents", 0))
+                amount_cents = int(_sg(meta, "amount_cents", 0) or 0)
             except (TypeError, ValueError):
                 amount_cents = 0
-            session_id = obj.get("id", "")
             if amount_cents > 0:
                 ok = await credit_wallet(
                     rid, amount_cents,
@@ -9537,8 +9572,8 @@ async def api_stripe_webhook(request: Request):
         else:
             # Subscription activation — atomic DB update first (works even if cache cold/empty),
             # then sync the in-memory cache, then notify by email.
-            plan = meta.get("plan", "founder")
-            sub_id = obj.get("subscription") or ""
+            plan = _sg(meta, "plan", "founder") or "founder"
+            sub_id = _sg(obj, "subscription", "") or ""
             persisted = False
             if db_pool:
                 try:
@@ -9590,15 +9625,15 @@ async def api_stripe_webhook(request: Request):
                     except Exception as e:
                         logger.error(f"Subscription welcome email failed (non-blocking): {e}")
     elif etype in ("customer.subscription.updated", "customer.subscription.deleted"):
-        cid = obj.get("customer")
-        rid = find_restaurant_by_stripe_customer(cid)
+        cid = _sg(obj, "customer", None)
+        rid = find_restaurant_by_stripe_customer(cid) if cid else None
         if rid:
-            status = "canceled" if etype.endswith("deleted") else obj.get("status", "active")
+            status = "canceled" if etype.endswith("deleted") else (_sg(obj, "status", "active") or "active")
             set_restaurant_stripe_config(rid, "subscription_status", status)
             bump_version(rid)
     elif etype == "invoice.payment_failed":
-        cid = obj.get("customer")
-        rid = find_restaurant_by_stripe_customer(cid)
+        cid = _sg(obj, "customer", None)
+        rid = find_restaurant_by_stripe_customer(cid) if cid else None
         if rid:
             set_restaurant_stripe_config(rid, "subscription_status", "past_due")
             bump_version(rid)
