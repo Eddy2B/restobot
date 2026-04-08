@@ -8336,20 +8336,100 @@ async def admin_update_restaurant_status(rid: str, request: Request):
     new_status = data.get("status", "")
     if new_status not in ("trial", "active", "suspended", "cancelled"):
         return {"error": "Invalid status"}
+
     rest["status"] = new_status
+    settings = rest.setdefault("settings", {})
+
+    # "Activer" depuis le super-admin = comp manuel : on force aussi
+    # subscription_status="active" pour bypasser le check trial_ends_at.
+    # Sinon compute_effective_status retourne "expired" sur un trial dépassé.
+    if new_status == "active":
+        settings["subscription_status"] = "active"
+        settings_json_for_db = json.dumps(settings)
+    else:
+        settings_json_for_db = None  # ne touche pas settings pour les autres statuts
+
+    if db_pool:
+        try:
+            async with db_pool.acquire() as conn:
+                if settings_json_for_db is not None:
+                    await conn.execute(
+                        "UPDATE restaurants SET status = $1, settings = $2::jsonb, updated_at = NOW() WHERE id = $3::uuid",
+                        new_status, settings_json_for_db, rid,
+                    )
+                else:
+                    await conn.execute(
+                        "UPDATE restaurants SET status = $1, updated_at = NOW() WHERE id = $2::uuid",
+                        new_status, rid,
+                    )
+        except Exception as e:
+            logger.error(f"Admin status update error: {e}")
+            return {"error": str(e)}
+
+    # Belt + bretelles : re-read DB into cache pour s'aligner avec n'importe
+    # quel autre changement out-of-band éventuel.
+    await _refresh_rest_from_db(rid)
+    bump_version(rid)
+    rest = restaurants_cache.get(rid, rest)
+    logger.info(f"Admin: status -> {new_status} for {rest.get('name')} ({rid[:8]}...)")
+    return {
+        "status": "ok",
+        "new_status": new_status,
+        "effective_status": compute_effective_status(rest),
+    }
+
+
+@app.post("/api/admin/restaurant/{rid}/extend-trial")
+async def admin_extend_trial(rid: str, request: Request):
+    """Offre X jours d'essai gratuit (admin manuel : compensation, prospect, etc.).
+    Réinitialise trial_ends_at = NOW() + X days, status = 'trial', et purge
+    settings.subscription_status si présent (pour redonner accès via essai)."""
+    if not verify_admin(request):
+        return Response(status_code=401)
+    rest = restaurants_cache.get(rid)
+    if not rest:
+        return {"error": "Restaurant not found"}
+    data = await request.json()
+    try:
+        days = int(data.get("days", 30))
+    except (TypeError, ValueError):
+        days = 30
+    if days < 1 or days > 365:
+        return {"error": "days doit être entre 1 et 365"}
+
+    new_end = datetime.utcnow() + timedelta(days=days)
+    settings = rest.setdefault("settings", {})
+    # Purge l'état d'abonnement pour que compute_effective_status retourne "trial"
+    settings.pop("subscription_status", None)
+    rest["status"] = "trial"
+    rest["trial_ends_at"] = new_end.isoformat()
+
     if db_pool:
         try:
             async with db_pool.acquire() as conn:
                 await conn.execute(
-                    "UPDATE restaurants SET status = $1, updated_at = NOW() WHERE id = $2::uuid",
-                    new_status, rid,
+                    """UPDATE restaurants SET
+                        trial_ends_at = $1,
+                        status = 'trial',
+                        settings = COALESCE(settings, '{}'::jsonb) - 'subscription_status',
+                        updated_at = NOW()
+                       WHERE id = $2::uuid""",
+                    new_end, rid,
                 )
         except Exception as e:
-            logger.error(f"Admin status update error: {e}")
+            logger.error(f"Admin extend-trial error: {e}")
             return {"error": str(e)}
+
+    await _refresh_rest_from_db(rid)
     bump_version(rid)
-    logger.info(f"Admin: status -> {new_status} for {rest.get('name')} ({rid[:8]}...)")
-    return {"status": "ok", "new_status": new_status, "effective_status": compute_effective_status(rest)}
+    rest = restaurants_cache.get(rid, rest)
+    logger.info(f"Admin: trial extended +{days}d for {rest.get('name')} ({rid[:8]}...) → {new_end.date().isoformat()}")
+    return {
+        "status": "ok",
+        "days": days,
+        "trial_ends_at": new_end.isoformat(),
+        "effective_status": compute_effective_status(rest),
+    }
 
 
 @app.put("/api/admin/restaurant/{rid}")
@@ -8750,7 +8830,7 @@ tr:hover td{background:#F9FAFB}
 <div class="toast" id="toast"></div>
 
 <script>
-var secret='';
+var secret=sessionStorage.getItem('gs_admin_secret')||'';
 var restaurants=[];
 var currentEditRid='';
 var currentEditData={};
@@ -8759,19 +8839,34 @@ var currentTab='general';
 // ===== AUTH =====
 document.getElementById('loginBtn').onclick=doLogin;
 document.getElementById('secretInput').onkeydown=function(e){if(e.key==='Enter')doLogin()};
-function doLogin(){
-  secret=document.getElementById('secretInput').value.trim();
+function doLogin(fromStorage){
+  if(!fromStorage){
+    secret=document.getElementById('secretInput').value.trim();
+  }
   if(!secret){document.getElementById('loginError').style.display='block';return}
   apiFetch('/api/admin/stats').then(function(r){
-    if(r.status===401){document.getElementById('loginError').style.display='block';secret='';return}
+    if(r.status===401){
+      // Stale secret in sessionStorage : purge silently and let user retype
+      sessionStorage.removeItem('gs_admin_secret');
+      secret='';
+      if(!fromStorage){document.getElementById('loginError').style.display='block'}
+      return;
+    }
     return r.json();
   }).then(function(d){
     if(!d)return;
+    sessionStorage.setItem('gs_admin_secret',secret);
     document.getElementById('loginOverlay').style.display='none';
     document.getElementById('app').classList.add('v');
     loadAll();setInterval(loadAll,15000);
-  }).catch(function(){document.getElementById('loginError').style.display='block';secret=''});
+  }).catch(function(){
+    if(!fromStorage){document.getElementById('loginError').style.display='block'}
+    sessionStorage.removeItem('gs_admin_secret');
+    secret='';
+  });
 }
+// Auto-login si on a un secret stocké en session (refresh page)
+if(secret){doLogin(true)}
 function apiFetch(url,opts){
   opts=opts||{};
   var sep=url.indexOf('?')>-1?'&':'?';
@@ -8915,6 +9010,7 @@ function renderRestoTable(){
     h+='<td><div style="display:flex;gap:4px;flex-wrap:wrap">';
     h+='<button class="btn btn-ghost btn-xs" data-action="edit" data-id="'+r.id+'">Modifier</button>';
     h+='<button class="btn btn-ok btn-xs" data-action="setstatus" data-id="'+r.id+'" data-newstatus="active">Activer</button>';
+    h+='<button class="btn btn-ghost btn-xs" data-action="extendtrial" data-id="'+r.id+'" data-name="'+esc(r.name)+'">Offrir essai</button>';
     h+='<button class="btn btn-danger btn-xs" data-action="setstatus" data-id="'+r.id+'" data-newstatus="suspended">Suspendre</button>';
     h+='<button class="btn btn-danger btn-xs" data-action="delete" data-id="'+r.id+'" data-name="'+esc(r.name)+'">Supprimer</button>';
     h+='</div></td>';
@@ -9160,7 +9256,24 @@ document.getElementById('convRestoFilter').onchange=loadConversations;
 function setStatus(rid,s){
   apiFetch('/api/admin/restaurant/'+rid+'/status',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({status:s})}).then(function(r){return r.json()}).then(function(d){
     if(d.status==='ok'){showToast('Statut: '+s);loadAll()}
-    else showToast('Erreur');
+    else showToast('Erreur: '+(d.error||'inconnue'));
+  });
+}
+
+// ===== EXTEND TRIAL =====
+function extendTrial(rid,name){
+  var input=window.prompt('Combien de jours d\\'essai offrir à '+name+' ?','30');
+  if(input===null)return;
+  var days=parseInt(input,10);
+  if(!days||days<1||days>365){showToast('Nombre de jours invalide (1-365)');return}
+  apiFetch('/api/admin/restaurant/'+rid+'/extend-trial',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({days:days})}).then(function(r){return r.json()}).then(function(d){
+    if(d.status==='ok'){
+      var endDate=new Date(d.trial_ends_at).toLocaleDateString('fr-FR',{day:'numeric',month:'long',year:'numeric'});
+      showToast('Essai prolongé de '+days+' jours (jusqu\\'au '+endDate+')');
+      loadAll();
+    } else {
+      showToast('Erreur: '+(d.error||'inconnue'));
+    }
   });
 }
 
@@ -9332,6 +9445,7 @@ document.addEventListener('click',function(e){
   else if(action==='edit'){closeDetail();openEdit(id)}
   else if(action==='delete')confirmDelete(id,t.getAttribute('data-name'));
   else if(action==='setstatus')setStatus(id,t.getAttribute('data-newstatus'));
+  else if(action==='extendtrial')extendTrial(id,t.getAttribute('data-name'));
   else if(action==='delbooking')deleteBooking(t.getAttribute('data-rid'),t.getAttribute('data-bid'));
 });
 
@@ -9475,6 +9589,7 @@ document.addEventListener('click',function(e){
   else if(action==='editfromdetail'){closeDetail();openEdit(id)}
   else if(action==='delete')confirmDelete(id,t.getAttribute('data-name'));
   else if(action==='setstatus')setStatus(id,t.getAttribute('data-newstatus'));
+  else if(action==='extendtrial')extendTrial(id,t.getAttribute('data-name'));
   else if(action==='delbooking'){var rid=t.getAttribute('data-rid');var bid=t.getAttribute('data-bid');deleteBooking(rid,bid)}
 });
 </script>
