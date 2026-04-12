@@ -1261,53 +1261,8 @@ async def ask_claude(system_prompt: str, messages: list) -> str:
 # WHATSAPP API
 # ==============================================================
 
-async def send_whatsapp_message(phone_number_id: str, access_token: str, to: str, text: str):
-    url = f"https://graph.facebook.com/v22.0/{phone_number_id}/messages"
-    headers = {"Authorization": f"Bearer {access_token}", "Content-Type": "application/json"}
-    max_length = 4096
-    chunks = [text[i:i+max_length] for i in range(0, len(text), max_length)]
-    async with httpx.AsyncClient(timeout=30) as client:
-        for chunk in chunks:
-            payload = {"messaging_product": "whatsapp", "to": to, "type": "text", "text": {"body": chunk}}
-            try:
-                resp = await client.post(url, headers=headers, json=payload)
-                if resp.status_code != 200:
-                    logger.error(f"WhatsApp API error: {resp.status_code} {resp.text}")
-            except Exception as e:
-                logger.error(f"WhatsApp send error: {e}")
-
-
-async def mark_as_read(phone_number_id: str, access_token: str, message_id: str):
-    url = f"https://graph.facebook.com/v22.0/{phone_number_id}/messages"
-    headers = {"Authorization": f"Bearer {access_token}", "Content-Type": "application/json"}
-    async with httpx.AsyncClient(timeout=10) as client:
-        try:
-            await client.post(url, headers=headers, json={"messaging_product": "whatsapp", "status": "read", "message_id": message_id})
-        except Exception:
-            pass
-
-
-def parse_webhook(body: dict) -> dict | None:
-    try:
-        entry = body.get("entry", [{}])[0]
-        changes = entry.get("changes", [{}])[0]
-        value = changes.get("value", {})
-        messages = value.get("messages", [])
-        if not messages:
-            return None
-        msg = messages[0]
-        contacts_data = value.get("contacts", [{}])
-        name = contacts_data[0].get("profile", {}).get("name", "") if contacts_data else ""
-        phone_number_id = value.get("metadata", {}).get("phone_number_id", "")
-        return {
-            "phone_number_id": phone_number_id,
-            "from": msg.get("from", ""),
-            "name": name,
-            "text": msg.get("text", {}).get("body", "") if msg.get("type") == "text" else "[media]",
-            "message_id": msg.get("id", ""),
-        }
-    except Exception:
-        return None
+# WhatsApp service extracted to app/services/whatsapp_service.py
+from app.services.whatsapp_service import send_whatsapp_message, mark_as_read, send_whatsapp_template, parse_webhook
 
 
 # ==============================================================
@@ -2734,44 +2689,7 @@ app.include_router(contact_router)
 # TWILIO — MISSED CALL DETECTION
 # ==============================================================
 
-async def send_whatsapp_template(phone_number_id: str, access_token: str, to: str, template_name: str, restaurant_name: str):
-    """Send a WhatsApp template message (required for business-initiated conversations)."""
-    url = f"https://graph.facebook.com/v22.0/{phone_number_id}/messages"
-    headers = {"Authorization": f"Bearer {access_token}", "Content-Type": "application/json"}
-    payload = {
-        "messaging_product": "whatsapp",
-        "to": to,
-        "type": "template",
-        "template": {
-            "name": template_name,
-            "language": {"code": "fr"},
-            "components": [
-                {
-                    "type": "body",
-                    "parameters": [
-                        {"type": "text", "text": restaurant_name}
-                    ]
-                }
-            ]
-        }
-    }
-    async with httpx.AsyncClient(timeout=30) as client:
-        try:
-            resp = await client.post(url, headers=headers, json=payload)
-            if resp.status_code == 200:
-                logger.info(f"WhatsApp template sent to {to} for {restaurant_name}")
-                return True
-            else:
-                logger.error(f"WhatsApp template error: {resp.status_code} {resp.text}")
-                # Fallback: try sending as regular text (works if client has messaged within 24h)
-                fallback_text = f"Bonjour ! 👋 Vous avez essayé de joindre {restaurant_name} et nous n&#39;avons pas pu prendre votre appel. Je suis l&#39;assistant du restaurant, comment puis-je vous aider ? Réservation, menu, horaires... je suis là pour vous ! 😊"
-                await send_whatsapp_message(phone_number_id, access_token, to, fallback_text)
-                return True
-        except Exception as e:
-            logger.error(f"WhatsApp template send error: {e}")
-            return False
-
-
+# send_whatsapp_template now in app/services/whatsapp_service.py
 async def handle_missed_call(caller_phone: str, restaurant_phone: str):
     """Handle a missed call: find restaurant and send WhatsApp to caller."""
     normalized_resto = normalize_phone(restaurant_phone)
@@ -3261,96 +3179,9 @@ async def api_campaign_preview(request: Request):
     matched = _filter_contacts(rid, filters)
     return {"count": len(matched)}
 
-# WHATSAPP_BROADCAST_COST_CENTS, WALLET_TOPUP_AMOUNTS_CENTS now imported from app.config
+# Wallet service extracted to app/services/wallet_service.py
+from app.services.wallet_service import get_wallet_cents, credit_wallet, debit_wallet, get_wallet_transactions
 
-def get_wallet_cents(rid: str) -> int:
-    rest = restaurants_cache.get(rid, {})
-    return int(rest.get("settings", {}).get("wallet_balance_cents", 0) or 0)
-
-async def _log_wallet_txn(rid: str, txn_type: str, amount_cents: int, balance_after: int,
-                          description: str = "", stripe_session_id: str = None, campaign_id: str = None):
-    if not db_pool:
-        return
-    try:
-        async with db_pool.acquire() as conn:
-            await conn.execute("""
-                INSERT INTO mt_wallet_transactions
-                (restaurant_id, txn_type, amount_cents, balance_after_cents, description, stripe_session_id, campaign_id)
-                VALUES ($1::uuid, $2, $3, $4, $5, $6, $7)
-                ON CONFLICT (stripe_session_id) DO NOTHING
-            """, rid, txn_type, amount_cents, balance_after, description, stripe_session_id, campaign_id)
-    except Exception as e:
-        logger.error(f"Wallet txn log error: {e}")
-
-async def credit_wallet(rid: str, amount_cents: int, description: str = "Recharge",
-                        stripe_session_id: str = None) -> bool:
-    """Crédite le wallet et journalise la transaction. Idempotent via stripe_session_id."""
-    rest = restaurants_cache.get(rid)
-    if not rest or amount_cents <= 0:
-        return False
-    # Idempotency: skip if this session was already credited
-    if stripe_session_id and db_pool:
-        try:
-            async with db_pool.acquire() as conn:
-                existing = await conn.fetchval(
-                    "SELECT 1 FROM mt_wallet_transactions WHERE stripe_session_id = $1",
-                    stripe_session_id,
-                )
-                if existing:
-                    logger.info(f"Wallet topup already processed for session {stripe_session_id}")
-                    return False
-        except Exception as e:
-            logger.error(f"Wallet idempotency check error: {e}")
-    settings = rest.setdefault("settings", {})
-    current = int(settings.get("wallet_balance_cents", 0) or 0)
-    new_balance = current + amount_cents
-    settings["wallet_balance_cents"] = new_balance
-    await db_save_restaurant(rid, rest)
-    await _log_wallet_txn(rid, "topup", amount_cents, new_balance, description, stripe_session_id=stripe_session_id)
-    bump_version(rid)
-    return True
-
-async def debit_wallet(rid: str, amount_cents: int, description: str = "",
-                       campaign_id: str = None) -> bool:
-    """Débite le wallet et journalise. Retourne False si solde insuffisant."""
-    rest = restaurants_cache.get(rid)
-    if not rest or amount_cents <= 0:
-        return False
-    settings = rest.setdefault("settings", {})
-    current = int(settings.get("wallet_balance_cents", 0) or 0)
-    if current < amount_cents:
-        return False
-    new_balance = current - amount_cents
-    settings["wallet_balance_cents"] = new_balance
-    await db_save_restaurant(rid, rest)
-    if description or campaign_id:
-        await _log_wallet_txn(rid, "debit", -amount_cents, new_balance, description, campaign_id=campaign_id)
-    return True
-
-
-async def get_wallet_transactions(rid: str, limit: int = 10) -> list:
-    if not db_pool:
-        return []
-    try:
-        async with db_pool.acquire() as conn:
-            rows = await conn.fetch("""
-                SELECT txn_type, amount_cents, balance_after_cents, description, created_at
-                FROM mt_wallet_transactions
-                WHERE restaurant_id = $1::uuid
-                ORDER BY created_at DESC
-                LIMIT $2
-            """, rid, limit)
-            return [{
-                "type": r["txn_type"],
-                "amount_cents": r["amount_cents"],
-                "amount_eur": round(r["amount_cents"] / 100, 2),
-                "balance_after_cents": r["balance_after_cents"],
-                "description": r["description"] or "",
-                "date": r["created_at"].isoformat() if r["created_at"] else "",
-            } for r in rows]
-    except Exception as e:
-        logger.error(f"Wallet txn fetch error: {e}")
-        return []
 
 
 @app.get("/api/wallet")
