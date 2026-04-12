@@ -7,8 +7,20 @@ from datetime import datetime, timedelta
 from fastapi.responses import JSONResponse
 
 import app.state as _state
+from app.config import ALL_SLOTS
 
 logger = logging.getLogger("guestscale")
+
+
+def init_daily_slots(rid: str):
+    """Initialize table availability slots for a restaurant."""
+    tables = _state.floor_tables.get(rid, [])
+    slots = {}
+    for slot_time in ALL_SLOTS:
+        slots[slot_time] = {}
+        for t in tables:
+            slots[slot_time][t["id"]] = "available"
+    _state.table_slots[rid] = slots
 
 
 def bump_version(restaurant_id: str):
