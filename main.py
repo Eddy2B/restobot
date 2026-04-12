@@ -8363,6 +8363,78 @@ async def admin_global_stats(request: Request):
     }
 
 
+# AUDIT FIX 2026-04-12 — Métriques business SaaS (MRR/ARR/ARPU/LTV/Churn)
+@app.get("/api/admin/metrics")
+async def admin_metrics(request: Request):
+    if not verify_admin(request):
+        return Response(status_code=401)
+
+    paying, trial_valid, expired_list, churned = [], [], [], []
+    for rid, rest in restaurants_cache.items():
+        eff = compute_effective_status(rest)
+        if eff == "active":
+            paying.append(rest)
+        elif eff == "trial":
+            trial_valid.append(rest)
+        elif eff == "expired":
+            expired_list.append(rest)
+        elif eff in ("canceled", "cancelled", "suspended"):
+            churned.append(rest)
+
+    # MRR : somme par plan (founder=99, standard=149)
+    mrr = 0
+    for rest in paying:
+        plan = rest.get("settings", {}).get("subscription_plan", "founder")
+        mrr += 99 if plan == "founder" else 149
+    arr = mrr * 12
+    n_paying = len(paying)
+    arpu = round(mrr / n_paying, 2) if n_paying > 0 else 0
+
+    # Churn mensuel (nb churned / (payants + churned) au début du mois — approximation)
+    n_churned = len(churned)
+    base = n_paying + n_churned
+    churn_rate = round(n_churned / base * 100, 1) if base > 0 else 0
+
+    # LTV estimée : ARPU / churn. Si churn=0 → 18 mois par défaut
+    ltv = round(arpu / (churn_rate / 100), 2) if churn_rate > 0 else round(arpu * 18, 2)
+
+    # Wallet revenue (total recharges Stripe)
+    wallet_revenue = 0.0
+    if db_pool:
+        try:
+            async with db_pool.acquire() as conn:
+                val = await conn.fetchval("SELECT COALESCE(SUM(amount_cents), 0) FROM mt_wallet_transactions WHERE txn_type = 'topup'")
+                wallet_revenue = round(val / 100, 2)
+        except Exception:
+            pass
+
+    # Totaux globaux
+    total_msgs = sum(
+        sum(snap.get("messages", 0) for snap in dsh) for dsh in daily_stats_history.values()
+    ) + sum(s.get("messages_today", 0) for s in stats.values())
+    total_bks = sum(len(b) for b in bookings.values())
+    total_cts = sum(len(c) for c in contacts.values())
+    total_rev = sum(1 for rq in review_queue.values() for r in rq if r.get("sent"))
+
+    return {
+        "mrr": mrr, "arr": arr,
+        "total_clients_paying": n_paying,
+        "total_clients_trial": len(trial_valid),
+        "total_clients_expired": len(expired_list),
+        "total_clients_churned": n_churned,
+        "churn_rate_monthly": churn_rate,
+        "avg_revenue_per_user": arpu,
+        "ltv_estimate": ltv,
+        "cac_estimate": None,
+        "ltv_cac_ratio": None,
+        "wallet_revenue_total": wallet_revenue,
+        "total_messages_sent": total_msgs,
+        "total_bookings": total_bks,
+        "total_contacts": total_cts,
+        "total_reviews_sent": total_rev,
+    }
+
+
 @app.get("/api/admin/restaurant/{rid}")
 async def admin_restaurant_detail(rid: str, request: Request):
     if not verify_admin(request):
@@ -8896,6 +8968,7 @@ tr:hover td{background:#F9FAFB}
 <div class="view v" id="view-dashboard">
   <div class="topbar"><h1>Dashboard</h1><div class="topbar-actions"><button class="btn btn-ghost btn-sm" onclick="loadAll()">Actualiser</button></div></div>
   <div class="kpis" id="kpis"></div>
+  <div id="metricsArea" style="margin-bottom:20px"></div>
   <div id="chartsArea"></div>
   <div class="card">
     <div class="card-h"><h2>Restaurants</h2></div>
@@ -9027,6 +9100,7 @@ document.querySelectorAll('.sb-item[data-nav]').forEach(function(el){
 // ===== DATA LOADING =====
 function loadAll(){
   apiFetch('/api/admin/stats').then(function(r){return r.json()}).then(renderKPIs);
+  apiFetch('/api/admin/metrics').then(function(r){return r.json()}).then(renderMetrics).catch(function(){});
   apiFetch('/api/admin/restaurants').then(function(r){return r.json()}).then(function(d){
     restaurants=d.restaurants||[];
     renderDashTable();
@@ -9036,6 +9110,42 @@ function loadAll(){
     if(document.getElementById('view-bookings').classList.contains('v'))loadBookings();
     if(document.getElementById('view-conversations').classList.contains('v'))loadConversations();
   });
+}
+
+function renderMetrics(m){
+  if(!m||m.error)return;
+  function fmtEur(v){return (v||0).toFixed(2).replace('.',',')+' \u20ac'}
+  function mc(val,label,color){
+    return '<div style="background:#fff;border-radius:12px;padding:18px 20px;box-shadow:0 1px 3px rgba(0,0,0,.06),0 2px 8px rgba(0,0,0,.03)"><div style="font-size:28px;font-weight:800;color:'+color+'">'+val+'</div><div style="font-size:12px;color:var(--tm);margin-top:4px">'+label+'</div></div>';
+  }
+  function ms(val,label){
+    return '<div style="background:#fff;border-radius:10px;padding:14px 16px;box-shadow:0 1px 2px rgba(0,0,0,.04)"><div style="font-size:20px;font-weight:800;color:var(--t)">'+val+'</div><div style="font-size:11px;color:var(--tm);margin-top:2px">'+label+'</div></div>';
+  }
+  var churnColor=m.churn_rate_monthly>5?'#EF4444':'#22C55E';
+  var h='<div class="card" style="margin-bottom:16px"><div class="card-h"><h2>Métriques Business</h2></div><div style="padding:20px">';
+  // Ligne 1 — 4 KPIs principaux
+  h+='<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:16px">';
+  h+=mc(fmtEur(m.mrr),'Monthly Recurring Revenue','#22C55E');
+  h+=mc(fmtEur(m.arr),'Annual Run Rate','#22C55E');
+  h+=mc(m.total_clients_paying,'Abonnements actifs','#2D7DD2');
+  h+=mc(m.churn_rate_monthly+'%','Taux de désabonnement mensuel',churnColor);
+  h+='</div>';
+  // Ligne 2 — 4 KPIs secondaires
+  h+='<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:16px">';
+  h+=ms(fmtEur(m.avg_revenue_per_user)+'/mois','Revenu moyen par client (ARPU)');
+  h+=ms(fmtEur(m.ltv_estimate),'Lifetime Value (est. '+(m.churn_rate_monthly>0?'1/churn':'18 mois')+')');
+  h+=ms(m.total_clients_trial,'Restaurants en essai gratuit');
+  h+=ms(m.total_clients_expired,'Essais expirés (prospects)');
+  h+='</div>';
+  // Ligne 3 — Activité globale
+  h+='<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px">';
+  h+=ms(m.total_messages_sent,'Total messages IA');
+  h+=ms(m.total_bookings,'Total réservations');
+  h+=ms(m.total_contacts,'Total contacts CRM');
+  h+=ms(fmtEur(m.wallet_revenue_total),'Revenus wallet WhatsApp');
+  h+='</div>';
+  h+='</div></div>';
+  document.getElementById('metricsArea').innerHTML=h;
 }
 
 function renderKPIs(d){
