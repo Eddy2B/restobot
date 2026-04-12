@@ -535,3 +535,26 @@ def _filter_contacts(rid: str, filters: dict) -> list:
         cutoff = (today_paris() - timedelta(days=int(not_seen_days))).isoformat()
         matched = [c for c in matched if (c.get("last_seen") or "") < cutoff]
     return matched
+
+
+def get_restaurant_stripe_config(rid: str, key: str):
+    """Read a Stripe-related setting from restaurant cache."""
+    rest = _state.restaurants_cache.get(rid)
+    if not rest:
+        return None
+    return rest.get("settings", {}).get(key)
+
+
+def set_restaurant_stripe_config(rid: str, key: str, value):
+    """Set a Stripe-related setting in restaurant cache (in-memory only)."""
+    rest = _state.restaurants_cache.get(rid)
+    if rest:
+        rest.setdefault("settings", {})[key] = value
+
+
+def find_restaurant_by_stripe_customer(customer_id: str):
+    """Find restaurant_id by Stripe customer ID."""
+    for rid, rest in _state.restaurants_cache.items():
+        if rest.get("settings", {}).get("stripe_customer_id") == customer_id:
+            return rid
+    return None
