@@ -500,3 +500,38 @@ def track_stats(rid: str, is_booking: bool = False, language: str = "fr"):
     langs[language] = langs.get(language, 0) + 1
     st["languages"] = langs
     _state.stats[rid] = st
+
+
+async def increment_message_count(rid: str, msg_type: str = "other"):
+    """Track message usage per restaurant per month."""
+    from app.utils.date_utils import now_paris
+    from app.config import PLAN_LIMITS
+    month = now_paris().strftime("%Y-%m")
+    counters = _state.usage_counters.setdefault(rid, {})
+    if month not in counters:
+        counters[month] = {"total": 0, "missed_call": 0, "reminder": 0, "review": 0, "other": 0}
+    counters[month]["total"] += 1
+    counters[month][msg_type] = counters[month].get(msg_type, 0) + 1
+    rest = _state.restaurants_cache.get(rid, {})
+    plan = rest.get("settings", {}).get("subscription_plan", "trial")
+    limit = PLAN_LIMITS.get(plan, 500)
+    total = counters[month]["total"]
+    if total == int(limit * 0.8):
+        logger.info(f"Usage alert 80%: {rid[:8]}... {total}/{limit}")
+    elif total == limit:
+        logger.info(f"Usage alert 100%: {rid[:8]}... {total}/{limit}")
+
+
+def _filter_contacts(rid: str, filters: dict) -> list:
+    """Filter contacts by tags and not-seen-days. Used by campaigns preview + send."""
+    from app.utils.date_utils import today_paris
+    rid_contacts = _state.contacts.get(rid, {})
+    matched = list(rid_contacts.values())
+    tags = filters.get("tags", [])
+    if tags:
+        matched = [c for c in matched if any(t in (c.get("tags") or []) for t in tags)]
+    not_seen_days = filters.get("not_seen_days")
+    if not_seen_days:
+        cutoff = (today_paris() - timedelta(days=int(not_seen_days))).isoformat()
+        matched = [c for c in matched if (c.get("last_seen") or "") < cutoff]
+    return matched
