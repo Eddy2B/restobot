@@ -7,7 +7,7 @@ from datetime import datetime, timedelta
 from fastapi.responses import JSONResponse
 
 import app.state as _state
-from app.config import ALL_SLOTS
+from app.config import ALL_SLOTS, MEAL_DURATION_SLOTS
 
 logger = logging.getLogger("guestscale")
 
@@ -25,6 +25,117 @@ def init_daily_slots(rid: str):
 
 def bump_version(restaurant_id: str):
     _state.data_versions[restaurant_id] = _state.data_versions.get(restaurant_id, 0) + 1
+
+
+def _split_table_ids(table_id: str) -> list:
+    """Split a combined table id like 'T5+T3' into ['T5','T3']."""
+    return [t.strip() for t in table_id.split("+") if t.strip()]
+
+
+def assign_table(rid: str, slot_time: str, table_id: str, booking_id: str):
+    """Block a table (or multi-table combo) for 2h starting from the booking slot."""
+    if rid not in _state.table_slots:
+        return
+    ids = _split_table_ids(table_id)
+    try:
+        start_idx = ALL_SLOTS.index(slot_time)
+    except ValueError:
+        if slot_time in _state.table_slots[rid]:
+            for tid in ids:
+                _state.table_slots[rid][slot_time][tid] = f"booked:{booking_id}"
+        return
+    for i in range(MEAL_DURATION_SLOTS):
+        idx = start_idx + i
+        if idx >= len(ALL_SLOTS):
+            break
+        s = ALL_SLOTS[idx]
+        if s in _state.table_slots[rid]:
+            for tid in ids:
+                _state.table_slots[rid][s][tid] = f"booked:{booking_id}"
+
+
+def release_table(rid: str, slot_time: str, table_id: str):
+    """Release a table (or multi-table combo) for 2h starting from the slot."""
+    if rid not in _state.table_slots:
+        return
+    ids = _split_table_ids(table_id)
+    try:
+        start_idx = ALL_SLOTS.index(slot_time)
+    except ValueError:
+        if slot_time in _state.table_slots.get(rid, {}):
+            for tid in ids:
+                _state.table_slots[rid][slot_time][tid] = "available"
+        return
+    for i in range(MEAL_DURATION_SLOTS):
+        idx = start_idx + i
+        if idx >= len(ALL_SLOTS):
+            break
+        s = ALL_SLOTS[idx]
+        if s in _state.table_slots[rid]:
+            for tid in ids:
+                _state.table_slots[rid][s][tid] = "available"
+
+
+def get_slot_summary(rid: str) -> dict:
+    """Get availability summary per time slot for a restaurant."""
+    tables = _state.floor_tables.get(rid, [])
+    slots = _state.table_slots.get(rid, {})
+    summary = {}
+    for slot_time in ALL_SLOTS:
+        slot_data = slots.get(slot_time, {})
+        total = len(tables)
+        avail = sum(1 for t in tables if slot_data.get(t["id"]) == "available")
+        summary[slot_time] = {"total": total, "available": avail, "booked": total - avail}
+    return summary
+
+
+def find_best_table(rid: str, slot_time: str, covers: int, zone_pref: str = None) -> str | None:
+    """Find the best available table (or combo) for the given party size."""
+    tables = _state.floor_tables.get(rid, [])
+    slots = _state.table_slots.get(rid, {}).get(slot_time, {})
+    available = [t for t in tables if slots.get(t["id"]) == "available"]
+
+    for try_zone in ([zone_pref, None] if zone_pref else [None]):
+        candidates = []
+        for t in available:
+            if t["seats"] < covers:
+                continue
+            if try_zone and t["zone"] != try_zone:
+                continue
+            candidates.append(t)
+        if candidates:
+            candidates.sort(key=lambda t: t["seats"])
+            return candidates[0]["id"]
+
+    pool = sorted(available, key=lambda t: t["seats"], reverse=True)
+    if zone_pref:
+        pool = sorted(pool, key=lambda t: (0 if t["zone"] == zone_pref else 1, -t["seats"]))
+    if not pool:
+        return None
+    best_combo = None
+    best_waste = 999
+    for i, big in enumerate(pool):
+        remaining = covers - big["seats"]
+        if remaining <= 0:
+            continue
+        combo = [big]
+        total = big["seats"]
+        rest_pool = sorted([t for j, t in enumerate(pool) if j != i], key=lambda t: t["seats"])
+        for t in rest_pool:
+            combo.append(t)
+            total += t["seats"]
+            if total >= covers:
+                break
+        if total >= covers:
+            waste = total - covers
+            if waste < best_waste:
+                best_waste = waste
+                best_combo = list(combo)
+    if best_combo:
+        best_combo.sort(key=lambda t: t["seats"], reverse=True)
+        return "+".join(t["id"] for t in best_combo)
+    return None
+
 
 
 async def db_save_booking(restaurant_id: str, booking: dict):

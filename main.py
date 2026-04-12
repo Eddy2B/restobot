@@ -43,6 +43,7 @@ from app.services.db_helpers import (
     db_save_waitlist_entry, db_update_waitlist_status, db_save_restaurant,
     bump_version, _refresh_rest_from_db, _refresh_all_restaurants_from_db,
     save_message, compute_effective_status, is_active_or_trial_valid, expired_402,
+    init_daily_slots, assign_table, release_table, get_slot_summary,
 )
 
 import anthropic
@@ -527,112 +528,7 @@ def init_daily_slots(rid: str):
     table_slots[rid] = slots
 
 
-def find_best_table(rid: str, slot_time: str, covers: int, zone_pref: str = None) -> str | None:
-    tables = floor_tables.get(rid, [])
-    slots = table_slots.get(rid, {}).get(slot_time, {})
-    # Collect all available tables
-    available = []
-    for t in tables:
-        if slots.get(t["id"]) == "available":
-            available.append(t)
-
-    # Try single table (prefer zone, then any)
-    for try_zone in ([zone_pref, None] if zone_pref else [None]):
-        candidates = []
-        for t in available:
-            if t["seats"] < covers:
-                continue
-            if try_zone and t["zone"] != try_zone:
-                continue
-            candidates.append(t)
-        if candidates:
-            candidates.sort(key=lambda t: t["seats"])
-            return candidates[0]["id"]
-
-    # No single table fits — find smallest combination that covers the group
-    # Strategy: take the biggest available table, then find the smallest complement
-    pool = sorted(available, key=lambda t: t["seats"], reverse=True)
-    if zone_pref:
-        pool = sorted(pool, key=lambda t: (0 if t["zone"] == zone_pref else 1, -t["seats"]))
-    if not pool:
-        return None
-    # Start with the largest table, then add the smallest table that fills the gap
-    best_combo = None
-    best_waste = 999
-    for i, big in enumerate(pool):
-        remaining = covers - big["seats"]
-        if remaining <= 0:
-            continue  # single table would have matched above
-        combo = [big]
-        total = big["seats"]
-        # Sort remaining tables by seats ascending to pick the smallest that fills the gap
-        rest = sorted([t for j, t in enumerate(pool) if j != i], key=lambda t: t["seats"])
-        for t in rest:
-            combo.append(t)
-            total += t["seats"]
-            if total >= covers:
-                break
-        if total >= covers:
-            waste = total - covers
-            if waste < best_waste:
-                best_waste = waste
-                best_combo = list(combo)
-    if best_combo:
-        best_combo.sort(key=lambda t: t["seats"], reverse=True)
-        return "+".join(t["id"] for t in best_combo)
-    return None
-
-
-MEAL_DURATION_SLOTS = 8  # 8 x 15min = 2h meal duration
-
-def _split_table_ids(table_id: str) -> list:
-    """Split a possibly combined table id like 'T5+T3' into ['T5','T3']."""
-    return [t.strip() for t in table_id.split("+") if t.strip()]
-
-def assign_table(rid: str, slot_time: str, table_id: str, booking_id: str):
-    """Block a table (or multi-table combo) for 2h starting from the booking slot."""
-    if rid not in table_slots:
-        return
-    ids = _split_table_ids(table_id)
-    try:
-        start_idx = ALL_SLOTS.index(slot_time)
-    except ValueError:
-        if slot_time in table_slots[rid]:
-            for tid in ids:
-                table_slots[rid][slot_time][tid] = f"booked:{booking_id}"
-        return
-    for i in range(MEAL_DURATION_SLOTS):
-        idx = start_idx + i
-        if idx >= len(ALL_SLOTS):
-            break
-        s = ALL_SLOTS[idx]
-        if s in table_slots[rid]:
-            for tid in ids:
-                table_slots[rid][s][tid] = f"booked:{booking_id}"
-
-
-def release_table(rid: str, slot_time: str, table_id: str):
-    """Release a table (or multi-table combo) for 2h starting from the slot."""
-    if rid not in table_slots:
-        return
-    ids = _split_table_ids(table_id)
-    try:
-        start_idx = ALL_SLOTS.index(slot_time)
-    except ValueError:
-        if slot_time in table_slots.get(rid, {}):
-            for tid in ids:
-                table_slots[rid][slot_time][tid] = "available"
-        return
-    for i in range(MEAL_DURATION_SLOTS):
-        idx = start_idx + i
-        if idx >= len(ALL_SLOTS):
-            break
-        s = ALL_SLOTS[idx]
-        if s in table_slots[rid]:
-            for tid in ids:
-                table_slots[rid][s][tid] = "available"
-
-
+# find_best_table now in app/services/db_helpers.py
 def get_available_slots(rid: str, covers: int, service: str = None) -> list:
     slots_to_check = ALL_SLOTS
     if service == "midi":
@@ -646,18 +542,7 @@ def get_available_slots(rid: str, covers: int, service: str = None) -> list:
     return available
 
 
-def get_slot_summary(rid: str) -> dict:
-    tables = floor_tables.get(rid, [])
-    slots = table_slots.get(rid, {})
-    summary = {}
-    for slot_time in ALL_SLOTS:
-        slot_data = slots.get(slot_time, {})
-        total = len(tables)
-        avail = sum(1 for t in tables if slot_data.get(t["id"]) == "available")
-        summary[slot_time] = {"total": total, "available": avail, "booked": total - avail}
-    return summary
-
-
+# get_slot_summary now in app/services/db_helpers.py
 def build_availability_context(rid: str) -> str:
     summary = get_slot_summary(rid)
     tables = floor_tables.get(rid, [])
@@ -3360,157 +3245,10 @@ async def api_list_bookings(request: Request):
     return {"bookings": bookings.get(rid, [])[-100:]}
 
 
-@app.get("/api/floorplan")
-async def api_get_floorplan(request: Request):
-    auth = get_auth(request)
-    if not auth:
-        return Response(status_code=401)
-    rid = auth["restaurant_id"]
-    return {
-        "tables": floor_tables.get(rid, []),
-        "slots": table_slots.get(rid, {}),
-        "bookings": bookings.get(rid, [])[-100:],
-        "slot_summary": get_slot_summary(rid),
-        "statuses": table_statuses.get(rid, {}),
-        "groups": table_groups.get(rid, []),
-    }
+# /api/floorplan/* extracted to app/routes/floorplan_routes.py
+from app.routes.floorplan_routes import router as floorplan_router
+app.include_router(floorplan_router)
 
-
-@app.post("/api/floorplan/assign")
-async def api_assign_table(request: Request):
-    auth = get_auth(request)
-    if not auth:
-        return Response(status_code=401)
-    rid = auth["restaurant_id"]
-    data = await request.json()
-    booking_id = data.get("booking_id")
-    table_id = data.get("table_id")
-    slot_time = data.get("slot_time")
-    if not all([booking_id, table_id, slot_time]):
-        return {"error": "Missing fields"}
-    for b in bookings.get(rid, []):
-        if b.get("id") == booking_id:
-            if b.get("table") and b.get("time"):
-                release_table(rid, b["time"], b["table"])
-            b["table"] = table_id
-            b["status"] = "confirmed"
-            break
-    assign_table(rid, slot_time, table_id, booking_id)
-    bump_version(rid)
-    return {"status": "assigned"}
-
-
-@app.post("/api/floorplan/release")
-async def api_release_table(request: Request):
-    auth = get_auth(request)
-    if not auth:
-        return Response(status_code=401)
-    rid = auth["restaurant_id"]
-    data = await request.json()
-    booking_id = data.get("booking_id")
-    for b in bookings.get(rid, []):
-        if b.get("id") == booking_id and b.get("table") and b.get("time"):
-            release_table(rid, b["time"], b["table"])
-            b["table"] = None
-            b["status"] = "pending"
-            break
-    bump_version(rid)
-    return {"status": "released"}
-
-
-@app.post("/api/floorplan/status")
-async def api_table_status(request: Request):
-    auth = get_auth(request)
-    if not auth:
-        return Response(status_code=401)
-    rid = auth["restaurant_id"]
-    data = await request.json()
-    table_id = data.get("table_id", "")
-    status = data.get("status", "available")
-    date = data.get("date", "")
-    service = data.get("service", "soir")
-    if status not in ("available", "reserved", "seated", "dessert", "done", "noshow"):
-        return {"error": "Invalid status"}
-    key = f"{date}:{service}:{table_id}"
-    table_statuses.setdefault(rid, {})[key] = status
-    bump_version(rid)
-    return {"status": "ok"}
-
-
-@app.post("/api/floorplan/group")
-async def api_table_group(request: Request):
-    auth = get_auth(request)
-    if not auth:
-        return Response(status_code=401)
-    rid = auth["restaurant_id"]
-    data = await request.json()
-    tables = data.get("tables", [])
-    name = data.get("name", "+".join(tables))
-    if len(tables) < 2:
-        return {"error": "Need at least 2 tables"}
-    groups = table_groups.setdefault(rid, [])
-    groups.append({"tables": tables, "name": name})
-    bump_version(rid)
-    return {"status": "ok", "groups": groups}
-
-
-@app.post("/api/floorplan/ungroup")
-async def api_table_ungroup(request: Request):
-    auth = get_auth(request)
-    if not auth:
-        return Response(status_code=401)
-    rid = auth["restaurant_id"]
-    data = await request.json()
-    name = data.get("name", "")
-    groups = table_groups.get(rid, [])
-    table_groups[rid] = [g for g in groups if g.get("name") != name]
-    bump_version(rid)
-    return {"status": "ok", "groups": table_groups[rid]}
-
-
-@app.post("/api/floorplan/setup")
-async def api_floorplan_setup(request: Request):
-    auth = get_auth(request)
-    if not auth:
-        return Response(status_code=401)
-    rid = auth["restaurant_id"]
-    data = await request.json()
-    tables_data = data.get("tables", [])
-    zones = data.get("zones", ["Salle"])
-    groups_data = data.get("groups", [])
-    services = data.get("services", {})
-
-    # Auto-position tables by zone
-    zone_list = list(set(t.get("zone", "Salle") for t in tables_data)) or zones
-    new_tables = []
-    for zi, zone in enumerate(zone_list):
-        zone_tables = [t for t in tables_data if t.get("zone") == zone]
-        cols = max(2, int(len(zone_tables) ** 0.5) + 1)
-        x_start = (zi / len(zone_list)) * 80 + 10
-        x_range = 80 / len(zone_list) - 5
-        for ti, t in enumerate(zone_tables):
-            row = ti // cols
-            col = ti % cols
-            new_tables.append({
-                "id": t.get("id", f"T{len(new_tables)+1}"),
-                "seats": int(t.get("capacity", t.get("seats", 4))),
-                "shape": "round" if int(t.get("capacity", t.get("seats", 4))) <= 4 else "rect",
-                "zone": zone.lower(),
-                "x": round(x_start + (col / max(cols-1, 1)) * x_range, 1),
-                "y": round(15 + (row / max(3, 1)) * 65, 1),
-            })
-
-    floor_tables[rid] = new_tables
-    rest = restaurants_cache.get(rid)
-    if rest:
-        rest["floor_tables"] = new_tables
-        if services:
-            rest.setdefault("settings", {})["services"] = services
-    table_groups[rid] = groups_data
-    init_daily_slots(rid)
-    await db_save_restaurant(rid, rest)
-    bump_version(rid)
-    return {"status": "ok", "tables": new_tables}
 
 
 @app.get("/api/widget/{slug}/config")
