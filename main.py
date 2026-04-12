@@ -2925,33 +2925,10 @@ async def api_delete_account(request: Request):
         return JSONResponse(status_code=500, content={"error": "Erreur lors de la suppression"})
 
 
-@app.delete("/api/contacts/{phone}/gdpr")
-async def api_gdpr_delete_contact(request: Request, phone: str):
-    auth = get_auth(request)
-    if not auth:
-        return Response(status_code=401)
-    rid = auth["restaurant_id"]
-    # Remove contact
-    rid_contacts = contacts.get(rid, {})
-    rid_contacts.pop(phone, None)
-    # Remove bookings
-    rid_bookings = bookings.get(rid, [])
-    bookings[rid] = [b for b in rid_bookings if b.get("phone") != phone]
-    # Remove conversations
-    conv_key = f"{rid}:{phone}"
-    conversations.pop(conv_key, None)
-    # Save to DB
-    if db_pool:
-        try:
-            async with db_pool.acquire() as conn:
-                await conn.execute("DELETE FROM mt_contacts WHERE restaurant_id = $1::uuid AND data->>'phone' = $2", rid, phone)
-                await conn.execute("DELETE FROM mt_bookings WHERE restaurant_id = $1::uuid AND data->>'phone' = $2", rid, phone)
-                await conn.execute("DELETE FROM mt_conversations WHERE restaurant_id = $1::uuid AND phone = $2", rid, phone)
-        except Exception as e:
-            logger.error(f"GDPR deletion error: {e}")
-    bump_version(rid)
-    logger.info(f"GDPR deletion: contact {phone} from restaurant {rid[:8]}...")
-    return {"status": "ok", "message": "Donnees du contact supprimees"}
+# /api/contacts/* extracted to app/routes/contact_routes.py
+from app.routes.contact_routes import router as contact_router
+app.include_router(contact_router)
+
 
 
 # ==============================================================
@@ -3930,150 +3907,7 @@ async def api_get_reviews(request: Request):
     }
 
 
-@app.get("/api/contacts/export")
-async def api_export_contacts(request: Request):
-    import csv, io
-    auth = get_auth(request)
-    if not auth:
-        return Response(status_code=401)
-    rid = auth["restaurant_id"]
-    rid_contacts = contacts.get(rid, {})
-    output = io.StringIO()
-    writer = csv.writer(output)
-    writer.writerow(["Nom", "Telephone", "Email", "Source", "Visites", "Tags", "Preferences", "Notes", "Langue"])
-    for c in sorted(rid_contacts.values(), key=lambda c: c.get("name", "")):
-        writer.writerow([
-            c.get("name", ""), c.get("phone", ""), c.get("email", ""),
-            c.get("source", ""), c.get("visits", 0),
-            ", ".join(c.get("tags", [])), c.get("preferences", ""),
-            c.get("notes", ""), c.get("language", ""),
-        ])
-    return Response(content=output.getvalue(), media_type="text/csv",
-                    headers={"Content-Disposition": "attachment; filename=contacts_export.csv"})
-
-
-@app.get("/api/bookings/export")
-async def api_export_bookings(request: Request):
-    import csv, io
-    auth = get_auth(request)
-    if not auth:
-        return Response(status_code=401)
-    rid = auth["restaurant_id"]
-    date_from = request.query_params.get("from", "")
-    date_to = request.query_params.get("to", "9999")
-    rid_bookings = bookings.get(rid, [])
-    filtered = [b for b in rid_bookings if date_from <= (b.get("date") or "") <= date_to]
-    filtered.sort(key=lambda b: (b.get("date", ""), b.get("booking_time", "")))
-    output = io.StringIO()
-    writer = csv.writer(output)
-    writer.writerow(["Date", "Heure", "Nom", "Telephone", "Couverts", "Table", "Zone", "Source", "Statut", "Occasion"])
-    for b in filtered:
-        writer.writerow([
-            b.get("date", ""), b.get("booking_time", b.get("time", "")),
-            b.get("name", ""), b.get("phone", ""),
-            b.get("covers", ""), b.get("table", ""), b.get("zone", ""),
-            b.get("source", ""), b.get("status", ""), b.get("occasion", ""),
-        ])
-    return Response(content=output.getvalue(), media_type="text/csv",
-                    headers={"Content-Disposition": "attachment; filename=reservations_export.csv"})
-
-
-@app.get("/api/contacts/search")
-async def api_search_contacts(request: Request):
-    auth = get_auth(request)
-    if not auth:
-        return Response(status_code=401)
-    rid = auth["restaurant_id"]
-    q = (request.query_params.get("q") or "").strip().lower()
-    if len(q) < 2:
-        return {"results": []}
-    rid_contacts = contacts.get(rid, {})
-    results = []
-    for phone, ct in rid_contacts.items():
-        name = (ct.get("name") or "").lower()
-        email = (ct.get("email") or "").lower()
-        if q in name or q in email or q in phone:
-            results.append(ct)
-        if len(results) >= 5:
-            break
-    return {"results": results}
-
-
-@app.get("/api/contacts")
-async def api_get_contacts(request: Request):
-    auth = get_auth(request)
-    if not auth:
-        return Response(status_code=401)
-    rid = auth["restaurant_id"]
-    rid_contacts = contacts.get(rid, {})
-    contact_list = sorted(rid_contacts.values(), key=lambda c: c.get("last_seen", ""), reverse=True)
-    return {"contacts": contact_list[:200], "total": len(rid_contacts)}
-
-
-@app.post("/api/contacts/tag")
-async def api_tag_contact(request: Request):
-    auth = get_auth(request)
-    if not auth:
-        return Response(status_code=401)
-    rid = auth["restaurant_id"]
-    if not is_active_or_trial_valid(rid):
-        return expired_402()
-    data = await request.json()
-    phone = data.get("phone")
-    tag = sanitize_input(data.get("tag", ""), 100)
-    tags_list = [sanitize_input(t, 100) for t in data.get("tags", []) if isinstance(t, str)]
-    rid_contacts = contacts.get(rid, {})
-    if phone in rid_contacts:
-        if tags_list:
-            rid_contacts[phone]["tags"] = tags_list
-        elif tag:
-            if tag not in rid_contacts[phone].get("tags", []):
-                rid_contacts[phone].setdefault("tags", []).append(tag)
-        await db_save_contact(rid, phone, rid_contacts[phone])
-    return {"status": "ok"}
-
-
-@app.post("/api/contacts/note")
-async def api_note_contact(request: Request):
-    auth = get_auth(request)
-    if not auth:
-        return Response(status_code=401)
-    rid = auth["restaurant_id"]
-    if not is_active_or_trial_valid(rid):
-        return expired_402()
-    data = await request.json()
-    phone = data.get("phone")
-    note_text = sanitize_input(data.get("note", ""), 2000)
-    rid_contacts = contacts.get(rid, {})
-    if phone in rid_contacts:
-        ct = rid_contacts[phone]
-        # Migrate old string notes to list format
-        existing = ct.get("notes", "")
-        if isinstance(existing, str):
-            ct["notes"] = [{"text": existing, "date": now_paris().isoformat()}] if existing else []
-        if note_text:
-            ct["notes"].append({"text": note_text, "date": now_paris().isoformat()})
-        await db_save_contact(rid, phone, ct)
-        bump_version(rid)
-    return {"status": "ok"}
-
-
-@app.post("/api/contacts/preferences")
-async def api_preferences_contact(request: Request):
-    auth = get_auth(request)
-    if not auth:
-        return Response(status_code=401)
-    rid = auth["restaurant_id"]
-    if not is_active_or_trial_valid(rid):
-        return expired_402()
-    data = await request.json()
-    phone = data.get("phone")
-    preferences = sanitize_input(data.get("preferences", ""), 1000)
-    rid_contacts = contacts.get(rid, {})
-    if phone in rid_contacts:
-        rid_contacts[phone]["preferences"] = preferences
-        await db_save_contact(rid, phone, rid_contacts[phone])
-    return {"status": "ok"}
+# contacts/export through contacts/preferences now in contact_routes.py
 
 
 # /api/config, /api/menu, /api/settings extracted to app/routes/config_routes.py
