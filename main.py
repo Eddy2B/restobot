@@ -61,6 +61,9 @@ from pathlib import Path
 from fastapi import FastAPI, Request, Response, BackgroundTasks
 from fastapi.responses import HTMLResponse, JSONResponse, FileResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
+from slowapi import Limiter  # AUDIT FIX 2026-04-12 — rate limiting
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
 from fastapi.middleware.cors import CORSMiddleware
 
 # ==============================================================
@@ -2432,6 +2435,11 @@ async def process_and_reply(rid: str, phone_number_id: str, customer_phone: str,
                 bump_version(rid)
         except Exception:
             pass  # Not valid JSON, treat as normal response
+
+    # AUDIT FIX 2026-04-12 — RGPD notice for new contacts (first interaction only)
+    if len(history) == 0 and '{"action":"escalate"' not in response:
+        rest_name = rest.get("name", "le restaurant")
+        response += f"\n\n_Vos données sont traitées par {rest_name} via GuestScale conformément au RGPD. Plus d'infos : guestscale.com/privacy.html_"
 
     save_message(rid, customer_phone, "user", message_text)
     save_message(rid, customer_phone, "assistant", response)
@@ -5396,6 +5404,14 @@ app = FastAPI(
 )
 app.add_middleware(CORSMiddleware, allow_origins=["https://app.guestscale.com", "https://guestscale.com", "https://www.guestscale.com", "http://localhost:3000", "http://localhost:8000"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 
+# AUDIT FIX 2026-04-12 — Rate limiting (slowapi)
+limiter = Limiter(key_func=get_remote_address)
+app.state.limiter = limiter
+
+@app.exception_handler(RateLimitExceeded)
+async def _rate_limit_handler(request: Request, exc: RateLimitExceeded):
+    return JSONResponse(status_code=429, content={"error": "Trop de tentatives. Réessayez dans quelques minutes."})
+
 from starlette.middleware.base import BaseHTTPMiddleware
 
 class SecurityHeadersMiddleware(BaseHTTPMiddleware):
@@ -5735,6 +5751,7 @@ async def send_cancellation_emails(user_email: str, first_name: str, restaurant_
 # ==============================================================
 
 @app.post("/api/register")
+@limiter.limit("5/minute")  # AUDIT FIX 2026-04-12
 async def api_register(request: Request):
     """Register a new restaurant + owner user. Self-service from guestscale.com."""
     client_ip = request.headers.get("x-forwarded-for", request.client.host if request.client else "unknown").split(",")[0].strip()
@@ -5862,6 +5879,7 @@ async def api_register(request: Request):
 
 
 @app.post("/api/login")
+@limiter.limit("10/minute")  # AUDIT FIX 2026-04-12
 async def api_login(request: Request):
     client_ip = request.headers.get("x-forwarded-for", request.client.host if request.client else "unknown").split(",")[0].strip()
     if check_login_lockout(client_ip):
@@ -6976,6 +6994,7 @@ async def api_get_wallet(request: Request):
 
 
 @app.post("/api/wallet/checkout")
+@limiter.limit("5/minute")  # AUDIT FIX 2026-04-12
 async def api_wallet_checkout(request: Request):
     auth = get_auth(request)
     if not auth:
@@ -7025,6 +7044,7 @@ async def api_wallet_checkout(request: Request):
 
 
 @app.post("/api/campaigns/send")
+@limiter.limit("10/minute")  # AUDIT FIX 2026-04-12
 async def api_campaign_send(request: Request):
     auth = get_auth(request)
     if not auth:
@@ -7497,6 +7517,63 @@ async def api_broadcast(request: Request):
             except Exception as e:
                 logger.warning(f"Broadcast failed for {phone}: {e}")
     return {"status": "ok", "sent": sent}
+
+
+# AUDIT FIX 2026-04-12 — KPIs IA (performance de l'agent)
+@app.get("/api/stats/ai-kpis")
+async def api_stats_ai_kpis(request: Request):
+    auth = get_auth(request)
+    if not auth:
+        return Response(status_code=401)
+    rid = auth["restaurant_id"]
+    cutoff = (today_paris() - timedelta(days=30)).isoformat()
+
+    # 1. Taux de conversion message → réservation
+    #    conversations ayant abouti à une résa / total conversations (30 derniers jours)
+    rid_convs = {k: v for k, v in conversations.items() if k.startswith(rid + ":")}
+    total_convs = len(rid_convs)
+    rid_bookings = bookings.get(rid, [])
+    booking_phones = {b.get("phone") for b in rid_bookings if b.get("source") == "whatsapp" and (b.get("date") or "") >= cutoff}
+    conv_phones_with_booking = 0
+    for conv_key in rid_convs:
+        phone = conv_key.split(":", 1)[1] if ":" in conv_key else ""
+        if phone in booking_phones:
+            conv_phones_with_booking += 1
+    conversion_rate = round((conv_phones_with_booking / total_convs * 100), 1) if total_convs > 0 else 0
+
+    # 2. Taux de réponse IA
+    #    messages IA / messages entrants (exclure les manuels et escalations)
+    total_user_msgs = 0
+    total_ai_msgs = 0
+    for msgs in rid_convs.values():
+        for m in msgs:
+            ts = m.get("timestamp", "")
+            if ts and ts < cutoff:
+                continue
+            if m.get("role") == "user":
+                total_user_msgs += 1
+            elif m.get("role") == "assistant" and m.get("sender_type") != "human":
+                total_ai_msgs += 1
+    ai_response_rate = round((total_ai_msgs / total_user_msgs * 100), 1) if total_user_msgs > 0 else 0
+
+    # 3. Avis Google envoyés
+    rq = review_queue.get(rid, [])
+    reviews_sent = sum(1 for r in rq if r.get("sent"))
+    reviews_responded = sum(1 for r in rq if r.get("responded"))
+    reviews_positive = sum(1 for r in rq if r.get("sentiment") == "POSITIVE")
+
+    return {
+        "period_days": 30,
+        "total_conversations": total_convs,
+        "conversations_with_booking": conv_phones_with_booking,
+        "conversion_rate": conversion_rate,
+        "total_user_messages": total_user_msgs,
+        "total_ai_responses": total_ai_msgs,
+        "ai_response_rate": ai_response_rate,
+        "reviews_sent": reviews_sent,
+        "reviews_responded": reviews_responded,
+        "reviews_positive": reviews_positive,
+    }
 
 
 @app.get("/api/stats/history")
@@ -8430,6 +8507,65 @@ async def admin_extend_trial(rid: str, request: Request):
         "trial_ends_at": new_end.isoformat(),
         "effective_status": compute_effective_status(rest),
     }
+
+
+# AUDIT FIX 2026-04-12 — Purge test data from a restaurant
+@app.post("/api/admin/purge-test-data/{rid}")
+async def admin_purge_test_data(rid: str, request: Request):
+    """Supprime les contacts/réservations/conversations dont le nom contient 'test' (case insensitive).
+    Utile pour nettoyer des données de dev visibles en démo."""
+    if not verify_admin(request):
+        return Response(status_code=401)
+    rest = restaurants_cache.get(rid)
+    if not rest:
+        return {"error": "Restaurant not found"}
+
+    rid_contacts_dict = contacts.get(rid, {})
+    rid_bookings_list = bookings.get(rid, [])
+    purged_contacts = 0
+    purged_bookings = 0
+    purged_convs = 0
+    phones_to_purge = []
+
+    # 1. Identify test contacts
+    for phone, ct in list(rid_contacts_dict.items()):
+        name = (ct.get("name") or "").lower()
+        if "test" in name:
+            phones_to_purge.append(phone)
+            del rid_contacts_dict[phone]
+            purged_contacts += 1
+
+    # 2. Purge associated bookings
+    for phone in phones_to_purge:
+        before = len(rid_bookings_list)
+        bookings[rid] = [b for b in rid_bookings_list if b.get("phone") != phone]
+        rid_bookings_list = bookings[rid]
+        purged_bookings += before - len(rid_bookings_list)
+
+    # 3. Purge associated conversations
+    conv_keys_to_remove = []
+    for phone in phones_to_purge:
+        conv_key = f"{rid}:{phone}"
+        if conv_key in conversations:
+            conv_keys_to_remove.append(conv_key)
+    for ck in conv_keys_to_remove:
+        conversations.pop(ck, None)
+        purged_convs += 1
+
+    # 4. Persist to DB
+    if db_pool and phones_to_purge:
+        try:
+            async with db_pool.acquire() as conn:
+                for phone in phones_to_purge:
+                    await conn.execute("DELETE FROM mt_contacts WHERE phone = $1 AND restaurant_id = $2::uuid", phone, rid)
+                    await conn.execute("DELETE FROM mt_conversations WHERE conv_key = $1 AND restaurant_id = $2::uuid", f"{rid}:{phone}", rid)
+                    await conn.execute("DELETE FROM mt_bookings WHERE restaurant_id = $1::uuid AND data->>'phone' = $2", rid, phone)
+        except Exception as e:
+            logger.error(f"Admin purge test data DB error: {e}")
+
+    bump_version(rid)
+    logger.info(f"Admin: purged test data for {rest.get('name')}: {purged_contacts} contacts, {purged_bookings} bookings, {purged_convs} conversations")
+    return {"status": "ok", "purged": {"contacts": purged_contacts, "bookings": purged_bookings, "conversations": purged_convs}}
 
 
 @app.put("/api/admin/restaurant/{rid}")

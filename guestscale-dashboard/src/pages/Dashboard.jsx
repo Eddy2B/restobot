@@ -2760,12 +2760,44 @@ export default function Dashboard() {
     );
   }
 
+  // AUDIT FIX 2026-04-12 — KPIs IA
+  const [aiKpis, setAiKpis] = useState(null);
+  useEffect(() => {
+    if (page === 'stats') {
+      apiFetch('/api/stats/ai-kpis').then(r => r.ok ? r.json() : null).then(d => { if (d) setAiKpis(d); }).catch(() => {});
+    }
+  }, [page]);
+
   function renderStats() {
     const period = statsPeriod;
     const maxH = statsHistory.length > 0 ? Math.max(...statsHistory.map(h => h.bookings || 0), 1) : 1;
 
     return (
       <div>
+        {/* AUDIT FIX 2026-04-12 — Performance IA section */}
+        {aiKpis && (
+          <div className="card" style={{ padding: 18, marginBottom: 14 }}>
+            <div className="card-t" style={{ marginBottom: 14 }}>Performance IA (30 derniers jours)</div>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: 14 }}>
+              <div className="sc">
+                <div className="sl">Conversion</div>
+                <div className="sv" style={{ color: 'var(--ac)' }}>{aiKpis.conversion_rate} %</div>
+                <div className="ss2">{aiKpis.conversations_with_booking} résa{aiKpis.conversations_with_booking !== 1 ? 's' : ''} / {aiKpis.total_conversations} conversation{aiKpis.total_conversations !== 1 ? 's' : ''}</div>
+              </div>
+              <div className="sc">
+                <div className="sl">Taux réponse IA</div>
+                <div className="sv" style={{ color: 'var(--ac)' }}>{aiKpis.ai_response_rate} %</div>
+                <div className="ss2">{aiKpis.total_ai_responses} réponses / {aiKpis.total_user_messages} messages</div>
+              </div>
+              <div className="sc">
+                <div className="sl">Avis Google</div>
+                <div className="sv" style={{ color: 'var(--ac)' }}>{aiKpis.reviews_sent}</div>
+                <div className="ss2">{aiKpis.reviews_responded} répondu{aiKpis.reviews_responded !== 1 ? 's' : ''} · {aiKpis.reviews_positive} positif{aiKpis.reviews_positive !== 1 ? 's' : ''}</div>
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* Range selector */}
         <div style={{ display: 'flex', gap: 6, marginBottom: 14, flexWrap: 'wrap' }}>
           {[{v:'1',l:"Aujourd'hui"},{v:'7',l:'7 jours'},{v:'30',l:'30 jours'},{v:'90',l:'3 mois'},{v:'365',l:'12 mois'}].map(r => (

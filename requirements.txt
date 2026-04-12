@@ -7,3 +7,4 @@ bcrypt>=4.2.0
 python-multipart>=0.0.9
 tzdata>=2024.1
 stripe>=8.0.0
+slowapi>=0.1.9
