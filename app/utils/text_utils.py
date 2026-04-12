@@ -49,3 +49,10 @@ async def safe_json(request) -> dict | None:
         return data
     except Exception:
         return None
+
+
+def is_valid_email(email: str) -> bool:
+    """Strict email validation — rejects CRLF injection, null bytes, and invalid formats."""
+    if not email or "\r" in email or "\n" in email or "\x00" in email or " " in email:
+        return False
+    return bool(re_mod.match(r'^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$', email))
