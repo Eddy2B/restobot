@@ -1934,7 +1934,8 @@ app = FastAPI(
 app.add_middleware(CORSMiddleware, allow_origins=["https://app.guestscale.com", "https://guestscale.com", "https://www.guestscale.com", "http://localhost:3000", "http://localhost:8000"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 
 # AUDIT FIX 2026-04-12 — Rate limiting (slowapi)
-limiter = Limiter(key_func=get_remote_address)
+# limiter now created in app.state (singleton), imported by route modules
+from app.state import limiter
 app.state.limiter = limiter
 
 @app.exception_handler(RateLimitExceeded)
@@ -3184,71 +3185,10 @@ from app.services.wallet_service import get_wallet_cents, credit_wallet, debit_w
 
 
 
-@app.get("/api/wallet")
-async def api_get_wallet(request: Request):
-    auth = get_auth(request)
-    if not auth:
-        return Response(status_code=401)
-    rid = auth["restaurant_id"]
-    cents = get_wallet_cents(rid)
-    txns = await get_wallet_transactions(rid, limit=10)
-    return {
-        "balance_cents": cents,
-        "balance_eur": round(cents / 100, 2),
-        "wa_msg_cost_cents": WHATSAPP_BROADCAST_COST_CENTS,
-        "topup_amounts_cents": list(WALLET_TOPUP_AMOUNTS_CENTS),
-        "transactions": txns,
-    }
+# /api/wallet/* extracted to app/routes/wallet_routes.py
+from app.routes.wallet_routes import router as wallet_router
+app.include_router(wallet_router)
 
-
-@app.post("/api/wallet/checkout")
-@limiter.limit("5/minute")  # AUDIT FIX 2026-04-12
-async def api_wallet_checkout(request: Request):
-    auth = get_auth(request)
-    if not auth:
-        return Response(status_code=401)
-    if not stripe_mod.api_key:
-        return JSONResponse(status_code=503, content={"error": "Stripe non configuré"})
-    rid = auth["restaurant_id"]
-    if not is_active_or_trial_valid(rid):
-        return expired_402()
-    data = await request.json()
-    try:
-        amount_cents = int(data.get("amount_cents", 0))
-    except (TypeError, ValueError):
-        amount_cents = 0
-    if amount_cents not in WALLET_TOPUP_AMOUNTS_CENTS:
-        return JSONResponse(status_code=400, content={"error": "Montant non autorisé"})
-    rest = restaurants_cache.get(rid, {})
-    rest_name = rest.get("name", "Restaurant")
-    amount_eur = amount_cents / 100
-    try:
-        session = stripe_mod.checkout.Session.create(
-            payment_method_types=["card"],
-            mode="payment",
-            line_items=[{
-                "price_data": {
-                    "currency": "eur",
-                    "unit_amount": amount_cents,
-                    "product_data": {
-                        "name": f"Recharge wallet WhatsApp — {amount_eur:.0f} €",
-                        "description": f"Crédit campagnes WhatsApp GuestScale ({rest_name})",
-                    },
-                },
-                "quantity": 1,
-            }],
-            metadata={
-                "type": "wallet_topup",
-                "restaurant_id": rid,
-                "amount_cents": str(amount_cents),
-            },
-            success_url=f"https://{APP_DOMAIN}/dashboard?p=campaigns&wallet=success",
-            cancel_url=f"https://{APP_DOMAIN}/dashboard?p=campaigns&wallet=cancel",
-        )
-        return {"checkout_url": session.url}
-    except Exception as e:
-        logger.error(f"Stripe wallet checkout error: {e}")
-        return JSONResponse(status_code=500, content={"error": "Erreur Stripe"})
 
 
 @app.post("/api/campaigns/send")

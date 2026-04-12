@@ -1,4 +1,9 @@
 # app/state.py — Centralized mutable state (singleton module)
+from slowapi import Limiter
+from slowapi.util import get_remote_address
+
+# Rate limiter singleton — registered with app in main.py, importable by route modules
+limiter = Limiter(key_func=get_remote_address)
 #
 # All shared mutable dicts and the db_pool live here. Import this module
 # (not individual names) for mutable singletons that get reassigned:
