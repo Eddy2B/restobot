@@ -3283,32 +3283,9 @@ async def receive_webhook(request: Request, background_tasks: BackgroundTasks):
 # DASHBOARD
 # ==============================================================
 
-@app.get("/admin", response_class=HTMLResponse)
-async def admin_dashboard_page(request: Request):
-    # Don't serve admin HTML without at least a hint of authorization
-    # The actual auth happens client-side with ADMIN_SECRET, but we can
-    # prevent scanners from detecting this route by checking a query param
-    if not request.query_params.get("k"):
-        return Response(status_code=404, content="Not found")
-    return HTMLResponse(ADMIN_DASHBOARD_HTML)
-
-
-@app.get("/")
-async def root():
-    return RedirectResponse(url="/login")
-
-
-DASHBOARD_DIR = Path(__file__).parent / "guestscale-dashboard" / "dist"
-
-@app.get("/login", response_class=HTMLResponse)
-@app.get("/dashboard", response_class=HTMLResponse)
-@app.get("/dashboard/{slug}", response_class=HTMLResponse)
-async def dashboard_page(request: Request, slug: str = ""):
-    index_file = DASHBOARD_DIR / "index.html"
-    if index_file.exists():
-        return FileResponse(index_file, media_type="text/html")
-    return HTMLResponse(DASHBOARD_HTML)
-
+# Static routes (/, /login, /dashboard, /admin, /health) extracted to app/routes/static_routes.py
+from app.routes.static_routes import router as static_router
+app.include_router(static_router)
 
 # ==============================================================
 # API ENDPOINTS (JWT-authenticated, multi-tenant)
@@ -5851,15 +5828,7 @@ async def api_stripe_webhook(request: Request):
 # HEALTH CHECK
 # ==============================================================
 
-@app.get("/health")
-@app.get("/api/health")
-async def health():
-    return {"status": "ok"}
-
-
-@app.get("/api/info")
-async def api_info():
-    return {"version": "1.0.0", "name": "GuestScale API"}
+# /health and /api/info now in app/routes/static_routes.py
 
 
 # ==============================================================
