@@ -2105,7 +2105,7 @@ async def api_pause_conversation(request: Request):
         ai_paused_conversations.get(rid, {}).pop(phone, None)
     return {"status": "ok"}
 
-@app.post("/api/conversations/send")
+# /api/conversations/send — dead code removed (already in extracted route module)
 async def api_send_manual_message(request: Request):
     """Send a manual WhatsApp message from the restaurateur to a client."""
     auth = get_auth(request)
@@ -2127,7 +2127,7 @@ async def api_send_manual_message(request: Request):
     bump_version(rid)
     return {"status": "ok"}
 
-@app.get("/api/escalations")
+# /api/escalations — dead code removed (already in extracted route module)
 async def api_escalations(request: Request):
     auth = get_auth(request)
     if not auth:
@@ -2135,7 +2135,7 @@ async def api_escalations(request: Request):
     rid = auth["restaurant_id"]
     return {"escalations": escalations.get(rid, [])}
 
-@app.post("/api/escalations/resolve")
+# /api/escalations/resolve — dead code removed (already in extracted route module)
 async def api_resolve_escalation(request: Request):
     auth = get_auth(request)
     if not auth:
@@ -2151,7 +2151,7 @@ async def api_resolve_escalation(request: Request):
     ai_paused_conversations.get(rid, {}).pop(phone, None)
     return {"status": "ok"}
 
-@app.get("/api/missed-calls")
+# /api/missed-calls — dead code removed (already in extracted route module)
 async def api_missed_calls(request: Request):
     auth = get_auth(request)
     if not auth:
@@ -2208,7 +2208,7 @@ app.include_router(static_router)
 # API ENDPOINTS (JWT-authenticated, multi-tenant)
 # ==============================================================
 
-@app.get("/api/version")
+# /api/version — dead code removed (already in extracted route module)
 async def api_version(request: Request):
     auth = get_auth(request)
     if not auth:
@@ -2217,7 +2217,7 @@ async def api_version(request: Request):
     return {"v": data_versions.get(rid, 0)}
 
 
-@app.get("/api/dashboard")
+# /api/dashboard — dead code removed (already in extracted route module)
 async def api_dashboard_data(request: Request):
     auth = get_auth(request)
     if not auth:
@@ -2241,7 +2241,7 @@ async def api_dashboard_data(request: Request):
     return {"stats": st, "status": status, "conversations_count": sum(1 for k in conversations if k.startswith(rid)), "recent_conversations": recent}
 
 
-@app.post("/api/status")
+# /api/status — dead code removed (already in extracted route module)
 async def api_update_status(request: Request):
     auth = get_auth(request)
     if not auth:
@@ -2256,7 +2256,7 @@ async def api_update_status(request: Request):
     return {"status": "updated"}
 
 
-@app.post("/api/message")
+# /api/message — dead code removed (already in extracted route module)
 async def api_update_message(request: Request):
     auth = get_auth(request)
     if not auth:
@@ -2270,7 +2270,7 @@ async def api_update_message(request: Request):
     return {"status": "updated"}
 
 
-@app.get("/api/conversations")
+# /api/conversations — dead code removed (already in extracted route module)
 async def api_list_conversations(request: Request):
     auth = get_auth(request)
     if not auth:
@@ -2393,7 +2393,7 @@ app.include_router(campaign_router)
 
 # /api/stats/history now in app/routes/stats_routes.py
 
-@app.post("/api/bookings/add")
+# /api/bookings/add — dead code removed (already in extracted route module)
 @app.post("/api/bookings/manual")
 async def api_add_manual_booking(request: Request):
     auth = get_auth(request)
@@ -2445,7 +2445,7 @@ async def api_add_manual_booking(request: Request):
     return {"status": "created", "booking_id": booking_id, "table": assigned_table}
 
 
-@app.post("/api/bookings/update")
+# /api/bookings/update — dead code removed (already in extracted route module)
 async def api_update_booking(request: Request):
     auth = get_auth(request)
     if not auth:
@@ -2480,7 +2480,7 @@ async def api_update_booking(request: Request):
     return {"error": "Booking not found"}
 
 
-@app.post("/api/bookings/delete")
+# /api/bookings/delete — dead code removed (already in extracted route module)
 async def api_delete_booking(request: Request):
     auth = get_auth(request)
     if not auth:
@@ -2519,7 +2519,7 @@ async def api_delete_booking(request: Request):
 # WAITLIST API
 # ==============================================================
 
-@app.get("/api/waitlist")
+# /api/waitlist — dead code removed (already in extracted route module)
 async def api_get_waitlist(request: Request):
     auth = get_auth(request)
     if not auth:
@@ -2538,7 +2538,7 @@ async def api_get_waitlist(request: Request):
     }
 
 
-@app.post("/api/waitlist/add")
+# /api/waitlist/add — dead code removed (already in extracted route module)
 async def api_add_to_waitlist(request: Request):
     auth = get_auth(request)
     if not auth:
@@ -2560,7 +2560,7 @@ async def api_add_to_waitlist(request: Request):
     return {"error": "Déjà sur la liste d&#39;attente"}
 
 
-@app.post("/api/waitlist/remove")
+# /api/waitlist/remove — dead code removed (already in extracted route module)
 async def api_remove_from_waitlist(request: Request):
     auth = get_auth(request)
     if not auth:
@@ -2578,7 +2578,7 @@ async def api_remove_from_waitlist(request: Request):
     return {"error": "Entry not found"}
 
 
-@app.post("/api/waitlist/notify")
+# /api/waitlist/notify — dead code removed (already in extracted route module)
 async def api_notify_waitlist(request: Request):
     """Manually trigger notification to next person on waitlist."""
     auth = get_auth(request)
