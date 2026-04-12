@@ -1907,6 +1907,22 @@ async def global_exception_handler(request: Request, exc: Exception):
 from app.routes.auth_routes import router as auth_router
 app.include_router(auth_router)
 
+# Route modules extracted during Phase 3b — MUST all be included here
+from app.routes.dashboard_routes import router as dashboard_router
+app.include_router(dashboard_router)
+from app.routes.conversation_routes import router as conversation_router
+app.include_router(conversation_router)
+from app.routes.stats_routes import router as stats_router
+app.include_router(stats_router)
+from app.routes.config_routes import router as config_router
+app.include_router(config_router)
+from app.routes.contact_routes import router as contact_router
+app.include_router(contact_router)
+from app.routes.review_routes import router as review_router
+app.include_router(review_router)
+from app.routes.wallet_routes import router as wallet_router
+app.include_router(wallet_router)
+
 
 # ==============================================================
 # TWILIO — MISSED CALL DETECTION
