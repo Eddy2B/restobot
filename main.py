@@ -90,8 +90,18 @@ logger = logging.getLogger("guestscale")
 # RATE LIMITING
 # ==============================================================
 
-rate_limit_store = {}  # ip -> {endpoint -> [timestamps]}
-login_failures = {}   # ip -> {"count": int, "locked_until": float}
+# Mutable state imported from app/state.py (Phase 3 refactoring)
+# Dicts are imported by name (mutations propagate — same object).
+# db_pool is accessed via _state.db_pool (reassignment at startup).
+import app.state as _state
+from app.state import (
+    restaurants_cache, pid_to_restaurant, phone_to_restaurant,
+    conversations, bookings, floor_tables, table_slots, table_statuses,
+    table_groups, review_queue, contacts, campaigns_store, restaurant_status,
+    stats, daily_stats_history, waitlist, data_versions, usage_counters,
+    ai_paused_conversations, escalations, missed_call_tracker, expired_reply_tracker,
+    web_sessions, password_reset_tokens, rate_limit_store, login_failures,
+)
 # RATE_LIMITS now imported from app.config
 
 def check_rate_limit(ip: str, endpoint: str) -> tuple:
@@ -151,30 +161,11 @@ def record_login_success(ip: str):
 # IN-MEMORY CACHES (keyed by restaurant_id)
 # ==============================================================
 
-restaurants_cache = {}      # restaurant_id (UUID str): {id, slug, name, owner_phone, whatsapp_phone_number_id, whatsapp_access_token, whatsapp_verify_token, google_review_link, settings, floor_tables, status, trial_ends_at}
-pid_to_restaurant = {}      # whatsapp_phone_number_id: restaurant_id (for webhook routing)
-phone_to_restaurant = {}    # normalized phone number: restaurant_id (for Twilio missed call routing)
-conversations = {}          # "restaurant_id:phone": [messages]
-bookings = {}               # restaurant_id: [bookings]
-floor_tables = {}           # restaurant_id: [{id, seats, zone, x, y, w, h, shape}]
-table_slots = {}            # restaurant_id: {"12:30": {"T1": "available"}}
-table_statuses = {}         # rid -> { "date:service:table_id": status }
-table_groups = {}           # rid -> [{"tables": ["T3","T4"], "name": "T3+T4"}]
-review_queue = {}           # restaurant_id: [reviews]
-contacts = {}               # restaurant_id: {phone: contact_data}
-campaigns_store = {}        # rid -> [campaign dicts]
-restaurant_status = {}      # restaurant_id: {status, message, closed_dates, full_dates, temp_message, ...}
-stats = {}                  # restaurant_id: {messages_today, bookings_today, languages, last_reset}
-daily_stats_history = {}    # restaurant_id: [snapshots]
-ai_paused_conversations = {}  # rid -> {phone: pause_until_iso}
-escalations = {}            # rid -> [escalation dicts]
-missed_call_tracker = {}    # rid -> {phone: {wa_sent_at, call_sent_at, date}}
-expired_reply_tracker = {}  # rid -> {phone: last_auto_reply_iso}  (24h cooldown anti-spam)
-usage_counters = {}  # rid -> {"2026-04": {"total": 0, "missed_call": 0, "reminder": 0, "review": 0, "other": 0}}
+# All 20 per-restaurant dicts now imported from app.state (see top of file)
 
 # Waitlist per restaurant
 # waitlist[rid] = [{"id": "W1", "phone": ..., "name": ..., "covers": 2, "service": "soir", "date": "2026-03-26", "added_at": ..., "status": "waiting"|"notified"|"accepted"|"declined"|"expired", "notified_at": None, "position": 1}]
-waitlist = {}               # restaurant_id: [entries]
+# waitlist now imported from app.state
 
 # PLAN_LIMITS, PLAN_RATES now imported from app.config
 
@@ -301,7 +292,7 @@ async def increment_message_count(rid: str, msg_type: str = "other"):
         logger.info(f"Usage alert 100%: {rid[:8]}... {total}/{limit}")
 
 # Data version counter per restaurant
-data_versions = {}          # restaurant_id: int
+# data_versions now imported from app.state
 def bump_version(restaurant_id: str):
     data_versions[restaurant_id] = data_versions.get(restaurant_id, 0) + 1
 
@@ -313,7 +304,8 @@ def bump_version(restaurant_id: str):
 # DATABASE
 # ==============================================================
 
-db_pool = None
+# db_pool lives in app.state — local alias for backward compat (6000+ references)
+db_pool = _state.db_pool  # initially None
 
 
 async def init_db():
@@ -324,6 +316,7 @@ async def init_db():
         return
     try:
         db_pool = await asyncpg.create_pool(DATABASE_URL, min_size=1, max_size=10)
+        _state.db_pool = db_pool  # propagate to app.state for other modules
         async with db_pool.acquire() as conn:
             # === NEW MULTI-TENANT TABLES ===
             await conn.execute("""
@@ -436,6 +429,7 @@ async def init_db():
     except Exception as e:
         logger.error(f"Database connection failed: {e}")
         db_pool = None
+        _state.db_pool = None
 
 
 # ==============================================================
@@ -2325,7 +2319,7 @@ from app.templates.dashboard_legacy import DASHBOARD_HTML  # refactored: ~2831 l
 # WEB CHAT SESSIONS
 # ==============================================================
 
-web_sessions = {}
+# web_sessions now imported from app.state
 
 
 # ==============================================================
@@ -2981,7 +2975,7 @@ async def api_login(request: Request):
 
 
 # In-memory password reset tokens (token -> {email, expires})
-password_reset_tokens = {}
+# password_reset_tokens now imported from app.state
 
 
 @app.post("/api/forgot-password")
