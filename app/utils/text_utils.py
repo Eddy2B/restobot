@@ -31,3 +31,21 @@ def normalize_phone(phone: str) -> str:
     if p.startswith('0') and len(p) == 10:
         p = '33' + p[1:]
     return p
+
+
+async def safe_json(request) -> dict | None:
+    """Parse JSON body safely. Returns None if invalid or contains NoSQL operators."""
+    try:
+        data = await request.json()
+        if not isinstance(data, dict):
+            return None
+        for key, val in data.items():
+            if isinstance(key, str) and key.startswith("$"):
+                return None
+            if isinstance(val, dict):
+                for vk in val:
+                    if isinstance(vk, str) and vk.startswith("$"):
+                        return None
+        return data
+    except Exception:
+        return None

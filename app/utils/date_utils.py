@@ -33,3 +33,11 @@ def format_date_fr(d) -> str:
     if isinstance(d, datetime):
         d = d.date()
     return f"{JOURS_FR[d.weekday()]} {d.day} {MOIS_FR[d.month - 1]} {d.year}"
+
+
+def _last_day_of_current_month_iso() -> str:
+    """Returns ISO date string of last day of current month in Paris TZ."""
+    import calendar
+    today = today_paris()
+    last_day = calendar.monthrange(today.year, today.month)[1]
+    return f"{today.year:04d}-{today.month:02d}-{last_day:02d}"
