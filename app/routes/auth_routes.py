@@ -181,7 +181,7 @@ async def api_login(request: Request):
         async with _state.db_pool.acquire() as conn:
             row = await conn.fetchrow("""
                 SELECT u.id, u.email, u.password_hash, u.first_name, u.last_name, u.role,
-                       u.restaurant_id, r.name as restaurant_name, r.status as _state.restaurant_status,
+                       u.restaurant_id, r.name as restaurant_name, r.status as restaurant_status,
                        r.trial_ends_at, r.slug
                 FROM users u
                 JOIN restaurants r ON u.restaurant_id = r.id
