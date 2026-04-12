@@ -3888,23 +3888,9 @@ def _filter_contacts(rid: str, filters: dict) -> list:
     return matched
 
 
-@app.get("/api/reviews")
-async def api_get_reviews(request: Request):
-    auth = get_auth(request)
-    if not auth:
-        return Response(status_code=401)
-    rid = auth["restaurant_id"]
-    rq = review_queue.get(rid, [])
-    return {
-        "queue": rq[-50:],
-        "stats": {
-            "total": len(rq),
-            "sent": sum(1 for r in rq if r.get("sent")),
-            "responded": sum(1 for r in rq if r.get("responded")),
-            "positive": sum(1 for r in rq if r.get("sentiment") == "POSITIVE"),
-            "negative": sum(1 for r in rq if r.get("sentiment") == "NEGATIVE"),
-        }
-    }
+# /api/reviews extracted to app/routes/review_routes.py
+from app.routes.review_routes import router as review_router
+app.include_router(review_router)
 
 
 # contacts/export through contacts/preferences now in contact_routes.py
