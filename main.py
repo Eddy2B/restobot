@@ -30,21 +30,12 @@ from collections import Counter
 from html import escape as html_escape
 
 
-def sanitize_input(value, max_length: int = 500):
-    """Escape dangerous HTML characters and limit length."""
-    if not isinstance(value, str):
-        return value
-    value = value.strip()
-    value = html_escape(value, quote=True)
-    return value[:max_length]
-
-
-def sanitize_dict(data: dict, fields: list, max_length: int = 500):
-    """Sanitize multiple string fields in a dict in-place."""
-    for f in fields:
-        if f in data and isinstance(data[f], str):
-            data[f] = sanitize_input(data[f], max_length)
-    return data
+# Text utils extracted to app/utils/text_utils.py (Phase 2 refactoring)
+from app.utils.text_utils import sanitize_input, sanitize_dict, normalize_phone
+# Date utils extracted to app/utils/date_utils.py (Phase 2 refactoring)
+from app.utils.date_utils import today_paris, now_paris, format_date_fr, MOIS_FR, JOURS_FR
+# Auth extracted to app/auth.py (Phase 2 refactoring)
+from app.auth import jwt_encode, jwt_decode, get_auth, hash_password, verify_password, verify_admin
 
 import anthropic
 import httpx
@@ -315,111 +306,8 @@ def bump_version(restaurant_id: str):
     data_versions[restaurant_id] = data_versions.get(restaurant_id, 0) + 1
 
 
-def today_paris() -> date:
-    """Get today's date in Europe/Paris timezone."""
-    try:
-        import zoneinfo
-        return datetime.now(zoneinfo.ZoneInfo("Europe/Paris")).date()
-    except Exception:
-        return today_paris()
-
-
-def now_paris() -> datetime:
-    """Get current datetime in Europe/Paris timezone."""
-    try:
-        import zoneinfo
-        return datetime.now(zoneinfo.ZoneInfo("Europe/Paris"))
-    except Exception as e:
-        logger.warning(f"zoneinfo failed, falling back to UTC: {e}")
-        return datetime.utcnow()
-
-
-def format_date_fr(d) -> str:
-    """Format a date in French: 'mercredi 1 avril 2026'."""
-    jours = ['lundi', 'mardi', 'mercredi', 'jeudi', 'vendredi', 'samedi', 'dimanche']
-    mois_fr = ['janvier', 'février', 'mars', 'avril', 'mai', 'juin',
-               'juillet', 'août', 'septembre', 'octobre', 'novembre', 'décembre']
-    if isinstance(d, datetime):
-        d = d.date()
-    return f"{jours[d.weekday()]} {d.day} {mois_fr[d.month - 1]} {d.year}"
-
-
-def normalize_phone(phone: str) -> str:
-    """Normalize a phone number to international format (e.g. 33612345678)."""
-    p = re_mod.sub(r'[^\d+]', '', phone.strip())
-    if p.startswith('+'):
-        p = p[1:]
-    if p.startswith('00'):
-        p = p[2:]
-    if p.startswith('0') and len(p) == 10:
-        p = '33' + p[1:]
-    return p
-
-# ==============================================================
-# JWT AUTH
-# ==============================================================
-
-import hmac
-import base64
-
-def jwt_encode(payload: dict) -> str:
-    """Simple JWT encode (HS256)."""
-    header = base64.urlsafe_b64encode(json.dumps({"alg": "HS256", "typ": "JWT"}).encode()).rstrip(b"=").decode()
-    payload["iat"] = int(time_mod.time())
-    payload["exp"] = int(time_mod.time()) + 3600 * 8  # 8 hours
-    body = base64.urlsafe_b64encode(json.dumps(payload).encode()).rstrip(b"=").decode()
-    sig_input = f"{header}.{body}"
-    sig = base64.urlsafe_b64encode(hmac.new(JWT_SECRET.encode(), sig_input.encode(), hashlib.sha256).digest()).rstrip(b"=").decode()
-    return f"{header}.{body}.{sig}"
-
-
-def jwt_decode(token: str) -> dict | None:
-    """Decode and verify a JWT token. Returns payload or None."""
-    try:
-        parts = token.split(".")
-        if len(parts) != 3:
-            return None
-        header, body, sig = parts
-        sig_input = f"{header}.{body}"
-        expected_sig = base64.urlsafe_b64encode(hmac.new(JWT_SECRET.encode(), sig_input.encode(), hashlib.sha256).digest()).rstrip(b"=").decode()
-        if sig != expected_sig:
-            return None
-        # Decode payload
-        padded = body + "=" * (4 - len(body) % 4)
-        payload = json.loads(base64.urlsafe_b64decode(padded))
-        if payload.get("exp", 0) < time_mod.time():
-            return None
-        return payload
-    except Exception:
-        return None
-
-
-def get_auth(request: Request) -> dict | None:
-    """Extract and verify JWT from cookie, Authorization header, or query param."""
-    token = request.cookies.get("gs_token")
-    if not token:
-        auth_header = request.headers.get("authorization", "")
-        if auth_header.startswith("Bearer "):
-            token = auth_header[7:]
-    if not token:
-        token = request.query_params.get("token", "")
-    if not token:
-        return None
-    return jwt_decode(token)
-
-
-def hash_password(password: str) -> str:
-    """Hash a password using bcrypt."""
-    return bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
-
-
-def verify_password(password: str, hashed: str) -> bool:
-    """Verify a password against a bcrypt hash."""
-    try:
-        return bcrypt.checkpw(password.encode(), hashed.encode())
-    except Exception:
-        return False
-
+# today_paris, now_paris, format_date_fr, normalize_phone now in app/utils/
+# jwt_encode, jwt_decode, get_auth, hash_password, verify_password now in app/auth.py
 
 # ==============================================================
 # DATABASE
@@ -5252,10 +5140,7 @@ def sanitize_restaurant(rest: dict) -> dict:
     return safe
 
 
-def verify_admin(request: Request) -> bool:
-    """Verify admin access via ADMIN_SECRET in query param or header."""
-    secret = request.query_params.get("secret", "") or request.headers.get("x-admin-secret", "")
-    return secret == ADMIN_SECRET and ADMIN_SECRET != ""
+# verify_admin now imported from app.auth (Phase 2 refactoring)
 
 
 @app.get("/api/admin/restaurants")
