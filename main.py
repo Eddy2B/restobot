@@ -43,7 +43,8 @@ from app.services.db_helpers import (
     db_save_waitlist_entry, db_update_waitlist_status, db_save_restaurant,
     bump_version, _refresh_rest_from_db, _refresh_all_restaurants_from_db,
     save_message, compute_effective_status, is_active_or_trial_valid, expired_402,
-    init_daily_slots, assign_table, release_table, get_slot_summary,
+    init_daily_slots, assign_table, release_table, find_best_table, get_slot_summary,
+    track_contact, track_stats, save_daily_stats_snapshot,
 )
 
 import anthropic
@@ -1348,59 +1349,8 @@ def detect_preferences(rid: str, customer_phone: str, message: str):
         rid_contacts[customer_phone] = ct
 
 
-def track_stats(rid: str, is_booking: bool = False, language: str = "fr"):
-    st = stats.get(rid, {"messages_today": 0, "bookings_today": 0, "languages": {}, "last_reset": today_paris().isoformat()})
-    today = today_paris().isoformat()
-    if st.get("last_reset") != today:
-        if st.get("last_reset"):
-            save_daily_stats_snapshot(rid, st)
-        st["messages_today"] = 0
-        st["bookings_today"] = 0
-        st["languages"] = {}
-        st["last_reset"] = today
-    st["messages_today"] = st.get("messages_today", 0) + 1
-    if is_booking:
-        st["bookings_today"] = st.get("bookings_today", 0) + 1
-    langs = st.get("languages", {})
-    langs[language] = langs.get(language, 0) + 1
-    st["languages"] = langs
-    stats[rid] = st
-
-
-def save_daily_stats_snapshot(rid: str, st: dict):
-    snapshot_date = st.get("last_reset", today_paris().isoformat())
-    rid_bookings = bookings.get(rid, [])
-    day_bookings = [b for b in rid_bookings if (b.get("date") or "").startswith(snapshot_date)]
-    sources = {}
-    total_covers = 0
-    for b in day_bookings:
-        s = b.get("source", "autre")
-        sources[s] = sources.get(s, 0) + 1
-        total_covers += b.get("covers", 0)
-    snapshot = {
-        "date": snapshot_date,
-        "bookings": len(day_bookings),
-        "covers": total_covers,
-        "messages": st.get("messages_today", 0),
-        "cancelled": 0,
-        "sources": sources,
-    }
-    dsh = daily_stats_history.get(rid, [])
-    dsh.append(snapshot)
-    if len(dsh) > 90:
-        dsh.pop(0)
-    daily_stats_history[rid] = dsh
-    logger.info(f"Daily stats saved for {snapshot_date}: {len(day_bookings)} bookings, {total_covers} covers")
-    # Persist async
-    import asyncio
-    try:
-        loop = asyncio.get_event_loop()
-        if loop.is_running():
-            loop.create_task(db_save_daily_stats(rid, snapshot_date, snapshot))
-    except Exception:
-        pass
-
-
+# track_stats now in db_helpers.py
+# save_daily_stats_snapshot now in db_helpers.py
 def build_daily_recap(rid: str) -> str:
     rest = restaurants_cache.get(rid)
     rid_bookings = bookings.get(rid, [])
@@ -1589,43 +1539,7 @@ async def send_daily_recap():
             logger.error(f"Daily recap error for {rest['name']}: {e}")
 
 
-def track_contact(rid: str, customer_phone: str, customer_name: str = "", language: str = "fr"):
-    rid_contacts = contacts.setdefault(rid, {})
-    now = datetime.utcnow().isoformat()
-    if customer_phone not in rid_contacts:
-        rid_contacts[customer_phone] = {
-            "name": customer_name or customer_phone,
-            "phone": customer_phone,
-            "first_seen": now,
-            "last_seen": now,
-            "visits": 1,
-            "bookings": [],
-            "tags": [],
-            "language": language,
-            "notes": "",
-            "source": "whatsapp",
-        }
-    else:
-        c = rid_contacts[customer_phone]
-        c["last_seen"] = now
-        c["visits"] = c.get("visits", 0) + 1
-        if customer_name and customer_name != customer_phone:
-            c["name"] = customer_name
-        if language:
-            c["language"] = language
-    import asyncio
-    try:
-        loop = asyncio.get_event_loop()
-        if loop.is_running():
-            loop.create_task(db_save_contact(rid, customer_phone, rid_contacts[customer_phone]))
-    except Exception:
-        pass
-
-
-# ==============================================================
-# NOTIFICATION & BOOKING CREATION
-# ==============================================================
-
+# track_contact now in db_helpers.py
 async def notify_owner(rid: str, rest: dict, customer_phone: str, customer_name: str, message: str, ai_response: str = ""):
     confirm_keywords = ["confirmé", "confirme", "noté", "note", "réservé", "reserve", "booked", "enregistré"]
     refusal_keywords = ["désolé", "desole", "impossible", "trop tard", "fermé", "ferme", "ne peux pas", "ne pourrons pas", "ne pourrai pas", "complet", "plus de place", "plus aucune", "malheureusement", "service terminé", "service termine", "déjà fermé", "deja ferme"]
@@ -3236,13 +3150,10 @@ async def api_list_conversations(request: Request):
     return {"conversations": result}
 
 
-@app.get("/api/bookings")
-async def api_list_bookings(request: Request):
-    auth = get_auth(request)
-    if not auth:
-        return Response(status_code=401)
-    rid = auth["restaurant_id"]
-    return {"bookings": bookings.get(rid, [])[-100:]}
+# /api/bookings/* + /api/waitlist/* extracted to app/routes/booking_routes.py
+from app.routes.booking_routes import router as booking_router
+app.include_router(booking_router)
+
 
 
 # /api/floorplan/* extracted to app/routes/floorplan_routes.py

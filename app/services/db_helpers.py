@@ -412,3 +412,91 @@ def save_message(rid: str, customer_phone: str, role: str, content: str, sender_
             loop.create_task(db_save_conversation(rid, customer_phone, _state.conversations[key]))
     except Exception:
         pass
+
+
+def track_contact(rid: str, customer_phone: str, customer_name: str = "", language: str = "fr"):
+    """Track or update a contact in the restaurant's CRM."""
+    from datetime import datetime
+    rid_contacts = _state.contacts.setdefault(rid, {})
+    now = datetime.utcnow().isoformat()
+    if customer_phone not in rid_contacts:
+        rid_contacts[customer_phone] = {
+            "name": customer_name or customer_phone,
+            "phone": customer_phone,
+            "first_seen": now,
+            "last_seen": now,
+            "visits": 1,
+            "bookings": [],
+            "tags": [],
+            "language": language,
+            "notes": "",
+            "source": "whatsapp",
+        }
+    else:
+        c = rid_contacts[customer_phone]
+        c["last_seen"] = now
+        c["visits"] = c.get("visits", 0) + 1
+        if customer_name and customer_name != customer_phone:
+            c["name"] = customer_name
+        if language:
+            c["language"] = language
+    import asyncio
+    try:
+        loop = asyncio.get_event_loop()
+        if loop.is_running():
+            loop.create_task(db_save_contact(rid, customer_phone, rid_contacts[customer_phone]))
+    except Exception:
+        pass
+
+
+def save_daily_stats_snapshot(rid: str, st: dict):
+    """Save a daily stats snapshot for historical tracking."""
+    from app.utils.date_utils import today_paris
+    snapshot_date = st.get("last_reset", today_paris().isoformat())
+    rid_bookings = _state.bookings.get(rid, [])
+    day_bookings = [b for b in rid_bookings if (b.get("date") or "").startswith(snapshot_date)]
+    sources = {}
+    total_covers = 0
+    for b in day_bookings:
+        s = b.get("source", "autre")
+        sources[s] = sources.get(s, 0) + 1
+        total_covers += b.get("covers", 0)
+    rq = _state.review_queue.get(rid, [])
+    snapshot = {
+        "date": snapshot_date,
+        "messages": st.get("messages_today", 0),
+        "bookings": len(day_bookings),
+        "covers": total_covers,
+        "sources": sources,
+        "languages": dict(st.get("languages", {})),
+        "reviews_sent": sum(1 for r in rq if r.get("sent")),
+    }
+    _state.daily_stats_history.setdefault(rid, []).append(snapshot)
+    import asyncio
+    try:
+        loop = asyncio.get_event_loop()
+        if loop.is_running():
+            loop.create_task(db_save_daily_stats(rid, snapshot_date, snapshot))
+    except Exception:
+        pass
+
+
+def track_stats(rid: str, is_booking: bool = False, language: str = "fr"):
+    """Track daily message/booking stats for a restaurant."""
+    from app.utils.date_utils import today_paris
+    st = _state.stats.get(rid, {"messages_today": 0, "bookings_today": 0, "languages": {}, "last_reset": today_paris().isoformat()})
+    today = today_paris().isoformat()
+    if st.get("last_reset") != today:
+        if st.get("last_reset"):
+            save_daily_stats_snapshot(rid, st)
+        st["messages_today"] = 0
+        st["bookings_today"] = 0
+        st["languages"] = {}
+        st["last_reset"] = today
+    st["messages_today"] = st.get("messages_today", 0) + 1
+    if is_booking:
+        st["bookings_today"] = st.get("bookings_today", 0) + 1
+    langs = st.get("languages", {})
+    langs[language] = langs.get(language, 0) + 1
+    st["languages"] = langs
+    _state.stats[rid] = st
