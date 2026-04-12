@@ -558,3 +558,12 @@ def find_restaurant_by_stripe_customer(customer_id: str):
         if rest.get("settings", {}).get("stripe_customer_id") == customer_id:
             return rid
     return None
+
+
+def sanitize_restaurant(rest: dict) -> dict:
+    """Remove sensitive fields from restaurant data before sending to client."""
+    safe = dict(rest)
+    token = safe.get("whatsapp_access_token", "")
+    if token:
+        safe["whatsapp_access_token"] = "***" + token[-8:]
+    return safe
