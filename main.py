@@ -1167,7 +1167,14 @@ RÈGLES STRICTES :
 - N'explicite JAMAIS que tu as acces a un profil CRM ou a des donnees personnelles. Utilise les infos naturellement.
 - Si tu ne peux PAS traiter la demande (allergie grave mettant en danger la vie, plainte serieuse, demande d'evenement prive, groupe >12 personnes, client demande explicitement un humain, ou 3 echanges sans resolution), reponds UNIQUEMENT avec ce JSON exact sur une seule ligne : {{"action":"escalate","reason":"...","summary":"..."}}
 """
-    logger.info(f"[PROMPT_DEBUG_HOURS] rid={rid[:8]} prompt_last_3000={prompt[-3000:]}")
+    logger.info(f"[PROMPT_FULL] rid={rid[:8]} len={len(prompt)} prompt={prompt}")
+    try:
+        import zoneinfo
+        _now = datetime.now(zoneinfo.ZoneInfo("Europe/Paris"))
+    except Exception:
+        _now = datetime.utcnow()
+    _days = ['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday']
+    logger.info(f"[DATE_DEBUG] rid={rid[:8]} now={_now.isoformat()} weekday={_now.strftime('%A')} tomorrow={_days[(_now.weekday()+1)%7]}")
     return prompt
 
 
