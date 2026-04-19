@@ -37,6 +37,7 @@ from app.utils.date_utils import today_paris, now_paris, format_date_fr, MOIS_FR
 # Auth extracted to app/auth.py (Phase 2 refactoring)
 from app.auth import jwt_encode, jwt_decode, get_auth, hash_password, verify_password, verify_admin
 # DB helpers + state management extracted to app/services/db_helpers.py (Phase 3b)
+from app.services.hours_service import format_hours_for_prompt, get_today_services, is_open_today
 from app.services.db_helpers import (
     db_save_booking, db_save_contact, db_save_conversation, db_save_review,
     db_mark_review_sent, db_save_restaurant_status, db_save_daily_stats,
@@ -430,11 +431,42 @@ def get_available_slots(rid: str, covers: int, service: str = None) -> list:
 
 # get_slot_summary now in app/services/db_helpers.py
 def build_availability_context(rid: str) -> str:
+    # Garde : si fermé aujourd'hui d'après hours_structured, pas de créneaux
+    settings = restaurants_cache.get(rid, {}).get("settings", {})
+    is_open = is_open_today(settings)
+    today_services = get_today_services(settings)
+
+    if is_open is False:
+        return "\n📅 FERMÉ AUJOURD'HUI — Ne propose pas de réservation pour ce jour. Propose un autre jour.\n"
+
     summary = get_slot_summary(rid)
     tables = floor_tables.get(rid, [])
     total_tables = len(tables)
     midi_avail = [t for t in MIDI_SLOTS if summary[t]["available"] > 0]
     soir_avail = [t for t in SOIR_SLOTS if summary[t]["available"] > 0]
+
+    # Si services structurés définis aujourd'hui, filtrer les créneaux aux plages ouvertes
+    if today_services:
+        allowed_ranges = []
+        for svc in today_services:
+            try:
+                h_start, m_start = int(svc["start"][:2]), int(svc["start"][3:])
+                h_end, m_end = int(svc["end"][:2]), int(svc["end"][3:])
+                allowed_ranges.append((h_start * 60 + m_start, h_end * 60 + m_end))
+            except (ValueError, KeyError):
+                continue
+
+        def in_allowed_range(slot_str: str) -> bool:
+            try:
+                h, m = int(slot_str[:2]), int(slot_str[3:])
+                slot_min = h * 60 + m
+                return any(start <= slot_min <= end for start, end in allowed_ranges)
+            except (ValueError, IndexError):
+                return True
+
+        midi_avail = [t for t in midi_avail if in_allowed_range(t)]
+        soir_avail = [t for t in soir_avail if in_allowed_range(t)]
+
     lines = [f"\n📅 DISPONIBILITÉS POUR AUJOURD'HUI ({today_paris().strftime('%A %d %B').lower()}) :"]
     if not midi_avail:
         lines.append("MIDI : COMPLET (aucune table disponible)")
@@ -1100,7 +1132,7 @@ INFORMATIONS DU RESTAURANT :
 - Description : {ctx.get('description', '')}
 - Adresse : {ctx.get('address', '')}
 - Téléphone : {ctx.get('phone', '')}
-- Horaires : {ctx.get('hours', '')}
+- Horaires : {format_hours_for_prompt(ctx)}
 - Infos pratiques : {ctx.get('special_info', '')}
 
 MENU :
