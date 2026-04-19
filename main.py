@@ -1633,6 +1633,29 @@ async def process_and_reply(rid: str, phone_number_id: str, customer_phone: str,
     if conv_pause and now_paris().isoformat() < conv_pause:
         return
 
+    # MODIF 2 — Détection opposition RGPD (STOP)
+    message_clean = message_text.strip().upper()
+    if message_clean in ("STOP", "ARRÊT", "ARRET", "UNSUBSCRIBE", "SE DÉSABONNER", "SE DESABONNER"):
+        rid_contacts = contacts.setdefault(rid, {})
+        if customer_phone in rid_contacts:
+            rid_contacts[customer_phone]["opted_out"] = True
+            rid_contacts[customer_phone]["opted_out_at"] = now_paris().isoformat()
+            await db_save_contact(rid, customer_phone, rid_contacts[customer_phone])
+        confirmation = f"Votre demande a bien été prise en compte. Vous ne recevrez plus de messages automatiques de {rest.get('name', 'ce restaurant')}. Pour toute question, écrivez à dpo@guestscale.com."
+        await send_whatsapp_message(phone_number_id, access_token, customer_phone, confirmation)
+        save_message(rid, customer_phone, "user", message_text)
+        save_message(rid, customer_phone, "assistant", confirmation)
+        await notify_owner(rid, rest, customer_phone, customer_name, message_text, confirmation)
+        logger.info(f"RGPD opt-out: {customer_phone} for {rid[:8]}")
+        return
+
+    # MODIF 3 — Si le contact a opt-out, ignorer ses messages (pas de réponse IA)
+    contact_data = contacts.get(rid, {}).get(customer_phone, {})
+    if contact_data.get("opted_out"):
+        save_message(rid, customer_phone, "user", message_text)
+        logger.info(f"Message ignored (opted-out): {customer_phone} for {rid[:8]}")
+        return
+
     # Check waitlist response first
     waitlist_response = await handle_waitlist_response(rid, customer_phone, message_text)
     if waitlist_response:
@@ -1679,15 +1702,20 @@ async def process_and_reply(rid: str, phone_number_id: str, customer_phone: str,
         except Exception:
             pass  # Not valid JSON, treat as normal response
 
-    # AUDIT FIX 2026-04-12 — RGPD notice for new contacts (first interaction only)
+    # RGPD notice for new contacts (first interaction only)
     if len(history) == 0 and '{"action":"escalate"' not in response:
         rest_name = rest.get("name", "le restaurant")
-        response += f"\n\n_Vos données sont traitées par {rest_name} via GuestScale conformément au RGPD. Plus d'infos : guestscale.com/privacy.html_"
+        response += f"\n\n---\nℹ️ *Information RGPD* : Vos données (nom, numéro, préférences) sont traitées par {rest_name} via GuestScale, conservées 36 mois, pour gérer vos réservations. Droits : répondre STOP pour ne plus être contacté, ou écrire à dpo@guestscale.com. Détails : guestscale.com/privacy.html"
 
     save_message(rid, customer_phone, "user", message_text)
     save_message(rid, customer_phone, "assistant", response)
     track_stats(rid, language="fr")
     track_contact(rid, customer_phone, customer_name)
+    # MODIF 4 — Tracer que la notice RGPD a été envoyée (après track_contact pour éviter l'écrasement)
+    if len(history) == 0:
+        ct = contacts.get(rid, {}).get(customer_phone)
+        if ct:
+            ct["rgpd_notice_sent_at"] = now_paris().isoformat()
     detect_preferences(rid, customer_phone, message_text)
 
     await send_whatsapp_message(phone_number_id, access_token, customer_phone, response)
