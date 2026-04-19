@@ -5,17 +5,43 @@ import logging
 
 import httpx
 from fastapi import APIRouter, Request, Response
+from fastapi.responses import JSONResponse
 
 import app.state as _state
+from app.state import limiter
 from app.config import ANTHROPIC_API_KEY
 from app.auth import get_auth
 from app.utils.text_utils import sanitize_input, sanitize_dict
 from app.services.db_helpers import (
     db_save_restaurant, db_save_restaurant_status, bump_version, init_daily_slots,
 )
+from app.services.hours_service import validate_hours_structured
 
 logger = logging.getLogger("guestscale")
 router = APIRouter()
+
+
+@router.put("/api/config/hours")
+@limiter.limit("30/minute")
+async def api_update_hours(request: Request):
+    auth = get_auth(request)
+    if not auth:
+        return JSONResponse({"error": "Non authentifié"}, status_code=401)
+    rid = auth["restaurant_id"]
+    data = await request.json()
+    hs = data.get("hours_structured")
+    if hs is None:
+        return JSONResponse({"error": "hours_structured requis"}, status_code=400)
+    ok, err = validate_hours_structured(hs)
+    if not ok:
+        return JSONResponse({"error": err}, status_code=400)
+    rest = _state.restaurants_cache.get(rid)
+    if not rest:
+        return JSONResponse({"error": "Restaurant introuvable"}, status_code=404)
+    rest.setdefault("settings", {})["hours_structured"] = hs
+    await db_save_restaurant(rid, rest)
+    bump_version(rid)
+    return JSONResponse({"status": "ok", "hours_structured": hs})
 
 
 @router.get("/api/config")
