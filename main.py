@@ -1071,7 +1071,9 @@ def build_system_prompt(rest: dict, rid: str, customer_phone: str = None) -> str
     else:
         booking_section = "\nRÉSERVATION : Si le client veut réserver, collecte : nombre de personnes, date, heure, nom. Une fois toutes les infos obtenues, confirme la réservation de manière claire et définitive (ex: 'Votre réservation est confirmée !'). Ne dis PAS que le restaurant doit encore valider — la réservation est automatiquement enregistrée."
 
+    logger.info(f"[CTX_DEBUG] rid={rid[:8]} hours_structured={ctx.get('hours_structured')} hours_legacy={ctx.get('hours', '')[:100]}")
     availability_context = build_availability_context(rid)
+    logger.info(f"[AVAIL_DEBUG] rid={rid[:8]} availability_context={availability_context}")
 
     # CRM customer profile
     customer_context = ""
@@ -1113,7 +1115,7 @@ def build_system_prompt(rest: dict, rid: str, customer_phone: str = None) -> str
         elif ct.get("visits", 0) == 0:
             customer_context += "\n- 🆕 NOUVEAU CLIENT — sois particulierement accueillant et propose de l'aider a choisir."
 
-    return f"""Tu es l&#39;assistant virtuel du restaurant "{rest['name']}".
+    prompt = f"""Tu es l&#39;assistant virtuel du restaurant "{rest['name']}".
 
 RÔLE : Tu réponds aux clients sur WhatsApp de manière naturelle et chaleureuse.
 Tu parles comme un membre de l'équipe, pas comme un robot.
@@ -1162,6 +1164,8 @@ RÈGLES STRICTES :
 - N'explicite JAMAIS que tu as acces a un profil CRM ou a des donnees personnelles. Utilise les infos naturellement.
 - Si tu ne peux PAS traiter la demande (allergie grave mettant en danger la vie, plainte serieuse, demande d'evenement prive, groupe >12 personnes, client demande explicitement un humain, ou 3 echanges sans resolution), reponds UNIQUEMENT avec ce JSON exact sur une seule ligne : {{"action":"escalate","reason":"...","summary":"..."}}
 """
+    logger.info(f"[PROMPT_DEBUG_HOURS] rid={rid[:8]} prompt_last_3000={prompt[-3000:]}")
+    return prompt
 
 
 async def ask_claude(system_prompt: str, messages: list) -> str:
