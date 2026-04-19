@@ -445,9 +445,9 @@ def build_availability_context(rid: str) -> str:
     midi_avail = [t for t in MIDI_SLOTS if summary[t]["available"] > 0]
     soir_avail = [t for t in SOIR_SLOTS if summary[t]["available"] > 0]
 
-    # Si services structurés définis aujourd'hui, filtrer les créneaux aux plages ouvertes
+    # Calcul des plages horaires autorisées (scope partagé entre filtrage midi/soir et détail par zone)
+    allowed_ranges = []
     if today_services:
-        allowed_ranges = []
         for svc in today_services:
             try:
                 h_start, m_start = int(svc["start"][:2]), int(svc["start"][3:])
@@ -456,14 +456,17 @@ def build_availability_context(rid: str) -> str:
             except (ValueError, KeyError):
                 continue
 
-        def in_allowed_range(slot_str: str) -> bool:
-            try:
-                h, m = int(slot_str[:2]), int(slot_str[3:])
-                slot_min = h * 60 + m
-                return any(start <= slot_min <= end for start, end in allowed_ranges)
-            except (ValueError, IndexError):
-                return True
+    def in_allowed_range(slot_str: str) -> bool:
+        if not allowed_ranges:
+            return True  # Pas de filtre si pas de services structurés (rétro-compat)
+        try:
+            h, m = int(slot_str[:2]), int(slot_str[3:])
+            slot_min = h * 60 + m
+            return any(start <= slot_min <= end for start, end in allowed_ranges)
+        except (ValueError, IndexError):
+            return True
 
+    if today_services:
         midi_avail = [t for t in midi_avail if in_allowed_range(t)]
         soir_avail = [t for t in soir_avail if in_allowed_range(t)]
 
@@ -477,22 +480,25 @@ def build_availability_context(rid: str) -> str:
     else:
         lines.append(f"SOIR : {len(soir_avail)} créneaux disponibles ({', '.join(soir_avail[:5])}{'...' if len(soir_avail) > 5 else ''})")
 
-    # Per-zone availability for key evening slots
-    lines.append("")
-    lines.append("DÉTAIL PAR ZONE ET CRÉNEAU (ce soir) :")
+    # Per-zone availability for key slots (filtered by today_services if defined)
     key_slots = ["19:00", "19:30", "20:00", "20:30", "21:00", "21:30"]
-    zones_list = list(set(t.get("zone", "salle") for t in tables))
-    for z in sorted(zones_list):
-        zone_tables = [t for t in tables if t.get("zone", "salle") == z]
-        slot_info = []
-        for sl in key_slots:
-            slot_data = table_slots.get(rid, {}).get(sl, {})
-            free = sum(1 for t in zone_tables if slot_data.get(t["id"]) == "available")
-            if free == 0:
-                slot_info.append(f"{sl} COMPLET")
-            else:
-                slot_info.append(f"{sl} ({free} libre{'s' if free > 1 else ''})")
-        lines.append(f"  {z.upper()} ({len(zone_tables)} tables) : {' | '.join(slot_info)}")
+    if today_services:
+        key_slots = [s for s in key_slots if in_allowed_range(s)]
+    if key_slots:
+        lines.append("")
+        lines.append("DÉTAIL PAR ZONE ET CRÉNEAU (ce soir) :")
+        zones_list = list(set(t.get("zone", "salle") for t in tables))
+        for z in sorted(zones_list):
+            zone_tables = [t for t in tables if t.get("zone", "salle") == z]
+            slot_info = []
+            for sl in key_slots:
+                slot_data = table_slots.get(rid, {}).get(sl, {})
+                free = sum(1 for t in zone_tables if slot_data.get(t["id"]) == "available")
+                if free == 0:
+                    slot_info.append(f"{sl} COMPLET")
+                else:
+                    slot_info.append(f"{sl} ({free} libre{'s' if free > 1 else ''})")
+            lines.append(f"  {z.upper()} ({len(zone_tables)} tables) : {' | '.join(slot_info)}")
 
     max_seats = max(t["seats"] for t in tables) if tables else 0
     lines.append(f"\nCapacité max par table : {max_seats} personnes")
