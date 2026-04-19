@@ -1068,11 +1068,11 @@ def build_system_prompt(rest: dict, rid: str, customer_phone: str = None) -> str
     if status.get("temp_message"):
         temp_msg = f"\n📢 MESSAGE DU RESTAURANT : {status['temp_message']}. Mentionne cette info si c'est pertinent pour le client."
 
+    # booking_section vidé — les INSTRUCTIONS RÉSERVATION dans availability_context
+    # couvrent tout le flow de manière correcte et cohérente avec les horaires.
     booking_section = ""
     if ctx.get("booking_link"):
-        booking_section = f"\nRÉSERVATION : Si le client veut réserver, envoie-lui ce lien : {ctx['booking_link']}"
-    else:
-        booking_section = "\nRÉSERVATION : Si le client veut réserver, collecte : nombre de personnes, date, heure, nom. Une fois toutes les infos obtenues, confirme la réservation de manière claire et définitive (ex: 'Votre réservation est confirmée !'). Ne dis PAS que le restaurant doit encore valider — la réservation est automatiquement enregistrée."
+        booking_section = f"\nLIEN RÉSERVATION : {ctx['booking_link']}"
 
     logger.info(f"[CTX_DEBUG] rid={rid[:8]} hours_structured={ctx.get('hours_structured')} hours_legacy={ctx.get('hours', '')[:100]}")
     availability_context = build_availability_context(rid)
@@ -1130,7 +1130,7 @@ RÈGLES HORAIRES STRICTES :
 - Compare TOUJOURS l'heure actuelle ({now_paris().strftime('%H:%M')}) avec les horaires du restaurant avant de proposer une disponibilité.
 - Si l'heure actuelle dépasse l'heure de DERNIER SERVICE (ex: 22h30 pour le dîner), le restaurant est FERMÉ pour ce service. Ne propose PAS de créneau ce soir.
 - L'heure de DERNIER SERVICE est l'heure ultime à laquelle un client peut être attablé : tu peux accepter une réservation jusqu'à cette heure incluse (ex: si dernier service 22h30, tu confirmes sans hésiter une résa à 22h00, 22h15 ou 22h30). Ne refuse JAMAIS un créneau encore disponible avant l'heure de dernier service.
-- Si le client demande "ce midi" et qu'il est après 14h, le service du midi est terminé. Propose le soir ou un autre jour.
+- Si le client demande un créneau dans le passé (ex: "ce midi" et il est 16h), ce service est terminé. Propose un autre jour OUVERT selon les HORAIRES D'OUVERTURE.
 - Ne propose JAMAIS un créneau dans le passé (ex: ne pas proposer 19h si il est déjà 21h).
 
 {TONE_PROMPTS.get(ctx.get('tone_preset', ''), '')}
