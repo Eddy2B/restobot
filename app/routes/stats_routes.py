@@ -60,16 +60,27 @@ async def api_stats_ai_kpis(request: Request):
 
     total_user_msgs = 0
     total_ai_msgs = 0
+    convs_with_user = 0      # conversations avec au moins 1 msg user (30j)
+    convs_with_ai = 0        # conversations avec au moins 1 msg IA auto (30j)
     for msgs in rid_convs.values():
+        has_user = False
+        has_ai = False
         for m in msgs:
             ts = m.get("timestamp", "")
             if ts and ts < cutoff:
                 continue
             if m.get("role") == "user":
                 total_user_msgs += 1
+                has_user = True
             elif m.get("role") == "assistant" and m.get("sender_type") != "human":
                 total_ai_msgs += 1
-    ai_response_rate = round((total_ai_msgs / total_user_msgs * 100), 1) if total_user_msgs > 0 else 0
+                has_ai = True
+        if has_user:
+            convs_with_user += 1
+        if has_ai:
+            convs_with_ai += 1
+    # Taux de prise en charge : % de conversations user où l'IA a répondu (toujours ≤ 100%)
+    ai_coverage_rate = round((convs_with_ai / convs_with_user * 100), 1) if convs_with_user > 0 else 0
 
     rq = _state.review_queue.get(rid, [])
     reviews_sent = sum(1 for r in rq if r.get("sent"))
@@ -82,8 +93,10 @@ async def api_stats_ai_kpis(request: Request):
         "conversations_with_booking": conv_phones_with_booking,
         "conversion_rate": conversion_rate,
         "total_user_messages": total_user_msgs,
-        "total_ai_responses": total_ai_msgs,
-        "ai_response_rate": ai_response_rate,
+        "ai_activity_count": total_ai_msgs,
+        "ai_coverage_rate": ai_coverage_rate,
+        "convs_with_user": convs_with_user,
+        "convs_with_ai": convs_with_ai,
         "reviews_sent": reviews_sent,
         "reviews_responded": reviews_responded,
         "reviews_positive": reviews_positive,

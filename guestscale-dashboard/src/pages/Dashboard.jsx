@@ -2785,9 +2785,14 @@ export default function Dashboard() {
                 <div className="ss2">{aiKpis.conversations_with_booking} résa{aiKpis.conversations_with_booking !== 1 ? 's' : ''} / {aiKpis.total_conversations} conversation{aiKpis.total_conversations !== 1 ? 's' : ''}</div>
               </div>
               <div className="sc">
-                <div className="sl">Taux réponse IA</div>
-                <div className="sv" style={{ color: 'var(--ac)' }}>{aiKpis.ai_response_rate} %</div>
-                <div className="ss2">{aiKpis.total_ai_responses} réponses / {aiKpis.total_user_messages} messages</div>
+                <div className="sl">Activité IA</div>
+                <div className="sv" style={{ color: 'var(--ac)' }}>{aiKpis.ai_activity_count}</div>
+                <div className="ss2">messages envoyés automatiquement</div>
+              </div>
+              <div className="sc">
+                <div className="sl">Prise en charge</div>
+                <div className="sv" style={{ color: 'var(--ac)' }}>{aiKpis.ai_coverage_rate} %</div>
+                <div className="ss2">conversations prises en charge par l'IA</div>
               </div>
               <div className="sc">
                 <div className="sl">Avis Google</div>
