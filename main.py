@@ -1074,9 +1074,7 @@ def build_system_prompt(rest: dict, rid: str, customer_phone: str = None) -> str
     if ctx.get("booking_link"):
         booking_section = f"\nLIEN RÉSERVATION : {ctx['booking_link']}"
 
-    logger.info(f"[CTX_DEBUG] rid={rid[:8]} hours_structured={ctx.get('hours_structured')} hours_legacy={ctx.get('hours', '')[:100]}")
     availability_context = build_availability_context(rid)
-    logger.info(f"[AVAIL_DEBUG] rid={rid[:8]} availability_context={availability_context}")
 
     # CRM customer profile
     customer_context = ""
@@ -1167,14 +1165,6 @@ RÈGLES STRICTES :
 - N'explicite JAMAIS que tu as acces a un profil CRM ou a des donnees personnelles. Utilise les infos naturellement.
 - Si tu ne peux PAS traiter la demande (allergie grave mettant en danger la vie, plainte serieuse, demande d'evenement prive, groupe >12 personnes, client demande explicitement un humain, ou 3 echanges sans resolution), reponds UNIQUEMENT avec ce JSON exact sur une seule ligne : {{"action":"escalate","reason":"...","summary":"..."}}
 """
-    logger.info(f"[PROMPT_FULL] rid={rid[:8]} len={len(prompt)} prompt={prompt}")
-    try:
-        import zoneinfo
-        _now = datetime.now(zoneinfo.ZoneInfo("Europe/Paris"))
-    except Exception:
-        _now = datetime.utcnow()
-    _days = ['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday']
-    logger.info(f"[DATE_DEBUG] rid={rid[:8]} now={_now.isoformat()} weekday={_now.strftime('%A')} tomorrow={_days[(_now.weekday()+1)%7]}")
     return prompt
 
 
